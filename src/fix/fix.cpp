@@ -19,6 +19,6 @@ struct Hello : public FunctionPass {
 }  // end of anonymous namespace
 
 char Hello::ID = 0;
-static RegisterPass<Hello> X("hello", "Hello World Pass",
+static RegisterPass<Hello> X("false-sharing-fix", "Pass to fix false sharing",
                              false /* Only looks at CFG */,
                              false /* Analysis Pass */);
