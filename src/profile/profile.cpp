@@ -17,12 +17,12 @@ struct Profile583 : public ModulePass {
   static char ID;
   Profile583() : ModulePass(ID) {}
 
-  void runOnInstruction(Instruction &inst) {
+  void runOnInstruction(const Instruction &inst) {
     // TODO: Add call to __print583 right after inst 
   }
 
-  void runOnBasicBlock(BasicBlock &bb) {
-    SmallVector<Instruction *> loadsAndStores;
+  void runOnBasicBlock(const BasicBlock &bb) {
+    SmallVector<const Instruction *> loadsAndStores;
     for (const auto &inst : bb) {
       switch (inst.getOpcode()) {
         case Instruction::Load:
@@ -152,7 +152,7 @@ struct Profile583 : public ModulePass {
 
 }  // end of anonymous namespace
 
-char Hello::ID = 0;
+char Profile583::ID = 0;
 static RegisterPass<Profile583> X("false-sharing-profile",
                                   "Pass to profile false sharing",
                                    false /* Only looks at CFG */,
