@@ -8,6 +8,7 @@
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/Utils/ModuleUtils.h"
+#include "llvm/IR/DataLayout.h"
 
 using namespace llvm;
 
@@ -54,6 +55,7 @@ struct Profile583 : public ModulePass {
       builder.getInt8PtrTy(),
       false,
       GlobalValue::InternalLinkage,
+      nullptr,
       "__handle583"
     );
     auto *ctor = Function::Create(
@@ -69,7 +71,7 @@ struct Profile583 : public ModulePass {
       SmallVector<Type *>{builder.getInt8PtrTy(), builder.getInt8PtrTy()},
       false
     );
-    auto *fopenFunc = Function::Create(fopenType, Function::ExternalLinkage, M);
+    auto *fopenFunc = Function::Create(fopenType, Function::ExternalLinkage, "__fopen583", M);
     auto *fopenResult = builder.CreateCall(fopenFunc, SmallVector<Value *>{
       builder.CreateGlobalStringPtr("./fs_profile.txt"),
       builder.CreateGlobalStringPtr("a")
@@ -90,7 +92,7 @@ struct Profile583 : public ModulePass {
       SmallVector<Type *>{builder.getInt8PtrTy()},
       false
     );
-    auto *fcloseFunc = Function::Create(fcloseType, Function::ExternalLinkage, M);
+    auto *fcloseFunc = Function::Create(fcloseType, Function::ExternalLinkage, "__fclose583", M);
     builder.CreateCall(fcloseFunc, SmallVector<Value *>{
       builder.CreateLoad(fileHandle)
     });
@@ -115,12 +117,13 @@ struct Profile583 : public ModulePass {
     // Create stack variables to call getcpu for retrieving the cpu id
     AllocaInst* cpu = builder.CreateAlloca(builder.getInt32Ty());
     AllocaInst* numa = builder.CreateAlloca(builder.getInt32Ty());
+    DataLayout dataLayout = DataLayout(&M);
     auto *getcpuType = FunctionType::get(
       builder.getInt32Ty(),
-      SmallVector<Type *>{builder.getIntPtrTy(), builder.getIntPtrTy()},
+      SmallVector<Type *>{builder.getIntPtrTy(dataLayout), builder.getIntPtrTy(dataLayout)},
       false
     );
-    auto *getcpuFunc = Function::Create(getcpuType, Function::ExternalLinkage, M);
+    auto *getcpuFunc = Function::Create(getcpuType, Function::ExternalLinkage, "__getcpu583", M);
     builder.CreateCall(getcpuType, SmallVector<Value *>{
       cpu, numa
     });
