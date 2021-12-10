@@ -5,26 +5,39 @@
 #include <stdio.h> 
 #include <pthread.h> 
 
-
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE 
+#endif
+#include <sched.h>
 
 struct timespec tpBegin1,tpEnd1,tpBegin2,tpEnd2,tpBegin3,tpEnd3;  //These are inbuilt structures to store the time related activities
 
+void print_cpu(const char * label) {
+  unsigned cpu, numa;
+  getcpu(&cpu, &numa);
+  printf("[%s] cpu: %u, numa: %u\n", label, cpu, numa);
+}
+
 double compute(struct timespec start,struct timespec end) //computes time in milliseconds given endTime and startTime timespec structures.
 {
+  print_cpu("compute begin");
   double t;
   t=(end.tv_sec-start.tv_sec)*1000;
   t+=(end.tv_nsec-start.tv_nsec)*0.000001;
-
+  print_cpu("compute end");
   return t;
 }
 
 int array[100];
 
 void *expensive_function(void *param) {     
+  print_cpu("expensive_function begin");
   int   index = *((int*)param);
   int   i;
   for (i = 0; i < 100000000; i++)
     array[index]+=1;
+  print_cpu("expensive_function end");
+  return nullptr;
 } 
 
 int main(int argc, char *argv[]) { 
@@ -37,8 +50,11 @@ int main(int argc, char *argv[]) {
   pthread_t     thread_1;
   pthread_t     thread_2;
 
+  print_cpu("main");
+
   //---------------------------START--------Serial Computation---------------------------------------------
 
+  printf("\nDoing serial computation of expensive function\n");
   clock_gettime(CLOCK_REALTIME,&tpBegin1);
   expensive_function((void*)&first_elem);
   expensive_function((void*)&bad_elem);
@@ -49,6 +65,7 @@ int main(int argc, char *argv[]) {
 
   //---------------------------START--------parallel computation with False Sharing----------------------------
 
+  printf("\nDoing parallel computation with false sharing (two expensive functions)\n");
   clock_gettime(CLOCK_REALTIME,&tpBegin2);
   pthread_create(&thread_1, NULL,expensive_function, (void*)&first_elem);
   pthread_create(&thread_2, NULL,expensive_function, (void*)&bad_elem);
@@ -61,6 +78,7 @@ int main(int argc, char *argv[]) {
 
   //---------------------------START--------parallel computation without False Sharing------------------------
 
+  printf("\nDoing parallel computation with NO false sharing (two expensive functions)\n");
   clock_gettime(CLOCK_REALTIME,&tpBegin3);   
   pthread_create(&thread_1, NULL,expensive_function, (void*)&first_elem);
   pthread_create(&thread_2, NULL,expensive_function, (void*)&good_elem);
@@ -72,8 +90,8 @@ int main(int argc, char *argv[]) {
 
 
   //--------------------------START------------------OUTPUT STATS--------------------------------------------
-  printf("array[first_element]: %d\t\t array[bad_element]: %d\t\t array[good_element]: %d\n\n\n", array[first_elem],array[bad_elem],array[good_elem]);
-
+  printf("\nStats:\n");
+  printf("array[first_element]: %d\t\t array[bad_element]: %d\t\t array[good_element]: %d\n\n", array[first_elem],array[bad_elem],array[good_elem]);
 
   time1 = compute(tpBegin1,tpEnd1);
   time2 = compute(tpBegin2,tpEnd2);
