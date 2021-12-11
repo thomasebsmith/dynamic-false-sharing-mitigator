@@ -42,7 +42,7 @@ rm -rf "${RUN_DIR}"
 mkdir -p "${RUN_DIR}"
 
 # Convert source code to bitcode (IR)
-clang -emit-llvm "${BENCH}" -c -o "${RUN_DIR}/${NAME}.bc"
+clang -emit-llvm -I/usr/include/llvm-c-10 -I/usr/include/llvm-10 "${BENCH}" -c -o "${RUN_DIR}/${NAME}.bc"
 
 opt -load "${PASSPATH}" "${PASSARG}" "${RUN_DIR}/${NAME}.bc" -o "${RUN_DIR}/${NAME}.${PASS}.bc"
 clang -pthread -lstdc++ "${RUN_DIR}/${NAME}.${PASS}.bc" -o "${RUN_DIR}/${NAME}_${PASS}"
