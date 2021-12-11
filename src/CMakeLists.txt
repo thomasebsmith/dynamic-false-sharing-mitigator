@@ -6,4 +6,5 @@ add_definitions(${LLVM_DEFINITIONS})                      # You don't need to ch
 include_directories(${LLVM_INCLUDE_DIRS})                 # You don't need to change ${LLVM_INCLUDE_DIRS} since it is already defined.
 set(CMAKE_BUILD_TYPE Debug)
 add_subdirectory(profile)                                 # Add the directory which your pass lives.
+add_subdirectory(globals)                                 # Add the directory which your pass lives.
 add_subdirectory(fix)                                 # Add the directory which your pass lives.

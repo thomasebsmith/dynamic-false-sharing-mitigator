@@ -1,3 +1,4 @@
 build/
 *.bc
 fs_profile.txt
+fs_globals.txt
