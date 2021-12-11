@@ -124,7 +124,7 @@ struct Profile583 : public ModulePass {
       false
     );
     auto *getcpuFunc = Function::Create(getcpuType, Function::ExternalLinkage, "__getcpu583", M);
-    builder.CreateCall(getcpuType, SmallVector<Value *>{
+    builder.CreateCall(getcpuFunc, SmallVector<Value *>{
       cpu, numa
     });
 
@@ -134,7 +134,7 @@ struct Profile583 : public ModulePass {
       SmallVector<Type *>{builder.getInt8PtrTy()},
       true
     );
-    auto *fprintfFunc = Function::Create(fprintfType, Function::ExternalLinkage, M);
+    auto *fprintfFunc = Function::Create(fprintfType, Function::ExternalLinkage, "__fprintf583", M);
     builder.CreateCall(fprintfFunc, SmallVector<Value *>{
       builder.CreateLoad(fileHandle),
       builder.CreateGlobalStringPtr("%p\t%d\t%u\n"),
