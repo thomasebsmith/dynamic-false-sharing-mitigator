@@ -34,7 +34,7 @@ void *expensive_function(void *param) {
   print_cpu("expensive_function begin");
   int   index = *((int*)param);
   int   i;
-  for (i = 0; i < 100000000; i++)
+  for (i = 0; i < 100; i++)
     array[index]+=1;
   print_cpu("expensive_function end");
   return nullptr;

@@ -9,6 +9,9 @@
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/Utils/ModuleUtils.h"
 #include "llvm/IR/DataLayout.h"
+#include <type_traits>
+#include <utility>
+#include <unordered_set>
 
 using namespace llvm;
 
@@ -18,13 +21,27 @@ struct Profile583 : public ModulePass {
   static char ID;
   Profile583() : ModulePass(ID) {}
 
-  void runOnInstruction(const Instruction &inst) {
-    // TODO: Add call to __print583 right after inst 
+  void runOnInstruction(Instruction *inst, Function *print583Func) {
+    IRBuilder<> builder(inst);
+    bool isStore = inst->getOpcode() == Instruction::Store;
+
+    Value *pointerOperand;
+    if (isStore) {
+      pointerOperand = dyn_cast<StoreInst>(inst)->getPointerOperand();
+    } else {
+      pointerOperand = dyn_cast<LoadInst>(inst)->getPointerOperand(); 
+    }
+    auto *int8Ptr = builder.CreatePointerCast(pointerOperand, builder.getInt8PtrTy());
+
+    builder.CreateCall(print583Func, SmallVector<Value *>{
+      int8Ptr,
+      ConstantInt::get(builder.getInt1Ty(), isStore)
+    });
   }
 
-  void runOnBasicBlock(const BasicBlock &bb) {
-    SmallVector<const Instruction *> loadsAndStores;
-    for (const auto &inst : bb) {
+  void runOnBasicBlock(BasicBlock &bb, Function *print583Func) {
+    SmallVector<Instruction *> loadsAndStores;
+    for (Instruction &inst : bb) {
       switch (inst.getOpcode()) {
         case Instruction::Load:
         case Instruction::Store:
@@ -34,22 +51,24 @@ struct Profile583 : public ModulePass {
       }
     }
 
-    for (const auto *inst : loadsAndStores) {
-      runOnInstruction(*inst);
+    for (auto *inst : loadsAndStores) {
+      runOnInstruction(inst, print583Func);
     }
   }
 
-  void runOnFunction(Function &F) {
-    for (const auto &bb: F) {
-      runOnBasicBlock(bb);
+  void runOnFunction(Function &F, Function *print583Func) {
+    for (auto &bb: F) {
+      runOnBasicBlock(bb, print583Func);
     }
   }
 
   // Adds a function of the form __print583(int8_t *addr, bool isStore)
   // Also adds a global file handle and global ctors/dtors for opening/closing it.
-  Function *addProfileFunction(Module &M) {
+  std::pair<Function *, std::unordered_set<Function *>> addProfileFunction(Module &M) {
     auto &context = M.getContext();
     IRBuilder<> builder(context);
+
+    std::unordered_set<Function *> allFuncs;
 
     auto *fileHandle = new GlobalVariable(
       M,
@@ -65,6 +84,8 @@ struct Profile583 : public ModulePass {
       "__ctor583",
       M
     );
+    allFuncs.insert(ctor);
+
     auto *ctorBB = BasicBlock::Create(context, "initHandle", ctor);
     builder.SetInsertPoint(ctorBB);
     auto *fopenType = FunctionType::get(
@@ -87,6 +108,7 @@ struct Profile583 : public ModulePass {
       "__dtor583",
       M
     );
+    allFuncs.insert(dtor);
     auto *dtorBB = BasicBlock::Create(context, "closeHandle", dtor);
     builder.SetInsertPoint(dtorBB);
     auto *fcloseType = FunctionType::get(
@@ -111,6 +133,7 @@ struct Profile583 : public ModulePass {
     );
 
     auto *func = Function::Create(type, Function::InternalLinkage, "__print583", M);
+    allFuncs.insert(func);
     func->getArg(0)->setName("addr");
     func->getArg(1)->setName("isStore");
 
@@ -126,10 +149,10 @@ struct Profile583 : public ModulePass {
       SmallVector<Type *>{int32PtrTy, int32PtrTy},
       false
     );
-    auto *getcpuFunc = Function::Create(getcpuType, Function::ExternalWeakLinkage, "getcpu", M);
-    builder.CreateCall(getcpuFunc, SmallVector<Value *>{
-      cpu, numa
-    });
+    //auto *getcpuFunc = Function::Create(getcpuType, Function::ExternalWeakLinkage, "getcpu", M);
+    // builder.CreateCall(getcpuFunc, SmallVector<Value *>{
+    //   cpu, numa
+    // });
 
     // Printed lines will be in the format "address<tab>isStore<tab>cpu"
     auto *fprintfType = FunctionType::get(
@@ -147,13 +170,23 @@ struct Profile583 : public ModulePass {
     });
     builder.CreateRetVoid();
 
-    errs() << "Pass returning without error\n";
-    return func;
+    errs() << "addProfileFunction returning without error\n";
+    return {func, allFuncs};
   }
 
   bool runOnModule(Module &M) override {
-    auto *print583Func = addProfileFunction(M);
-    // TODO: call runOnFunction for each function
+    auto funcs = addProfileFunction(M);
+    auto *print583Func = funcs.first;
+    auto &ourFuncs = funcs.second;
+
+    for (auto& F: M) {
+      errs() << "Function: " << F << "\n";
+      errs() << "Matches print583Func? " << (print583Func == &F) << "\n";
+      if (ourFuncs.count(&F) == 0) {
+        runOnFunction(F, print583Func);
+      }
+    }
+    errs() << "runOnModule returning without error\n";
     return true;
   }
 }; // end of struct Profile583
