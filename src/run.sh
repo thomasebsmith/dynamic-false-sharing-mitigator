@@ -27,6 +27,6 @@ mkdir -p "${RUN_DIR}"
 clang -emit-llvm "${BENCH}" -c -o "${RUN_DIR}/${NAME}.bc"
 
 opt -load "${PATH2PROFILE}" "${PASSPROFILE}" "${RUN_DIR}/${NAME}.bc" -o "${RUN_DIR}/${NAME}.prof.bc"
-clang -pthread "${RUN_DIR}/${NAME}.prof.bc" -o "${RUN_DIR}/${NAME}_prof"
+clang -pthread -lstdc++ "${RUN_DIR}/${NAME}.prof.bc" -o "${RUN_DIR}/${NAME}_prof"
 
-"${RUN_DIR}/${NAME}_prof"
+# "${RUN_DIR}/${NAME}_prof"

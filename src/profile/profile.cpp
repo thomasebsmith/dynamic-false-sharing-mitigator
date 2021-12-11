@@ -31,6 +31,16 @@ struct Profile583 : public ModulePass {
     } else {
       pointerOperand = dyn_cast<LoadInst>(inst)->getPointerOperand(); 
     }
+    if (auto *operandInst = dyn_cast<Instruction>(pointerOperand)) {
+      if (operandInst->getOpcode() == Instruction::Alloca) {
+        return;
+      }
+    }
+    //errs() << "pointerOperand ---\n" << *pointerOperand << '\n';
+    //errs() << "  global = " << isa<GlobalVariable>(pointerOperand) << '\n';
+    //errs() << "  const = " << isa<Constant>(pointerOperand) << '\n';
+    //errs() << "  gepi = " << isa<GetElementPtrInst>(pointerOperand) << "\n";
+    //errs() << "  global value = " << isa<GlobalValue>(pointerOperand) << "\n---\n";
     auto *int8Ptr = builder.CreatePointerCast(pointerOperand, builder.getInt8PtrTy());
 
     builder.CreateCall(print583Func, SmallVector<Value *>{
@@ -45,7 +55,6 @@ struct Profile583 : public ModulePass {
       switch (inst.getOpcode()) {
         case Instruction::Load:
         case Instruction::Store:
-          // TODO: Filter out stack variables
           loadsAndStores.push_back(&inst);
           break;
       }
@@ -170,7 +179,6 @@ struct Profile583 : public ModulePass {
     });
     builder.CreateRetVoid();
 
-    errs() << "addProfileFunction returning without error\n";
     return {func, allFuncs};
   }
 
@@ -180,13 +188,10 @@ struct Profile583 : public ModulePass {
     auto &ourFuncs = funcs.second;
 
     for (auto& F: M) {
-      errs() << "Function: " << F << "\n";
-      errs() << "Matches print583Func? " << (print583Func == &F) << "\n";
       if (ourFuncs.count(&F) == 0) {
         runOnFunction(F, print583Func);
       }
     }
-    errs() << "runOnModule returning without error\n";
     return true;
   }
 }; // end of struct Profile583
