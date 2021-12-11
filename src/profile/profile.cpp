@@ -93,7 +93,7 @@ struct Profile583 : public ModulePass {
       SmallVector<Type *>{builder.getInt8PtrTy(), builder.getInt8PtrTy()},
       false
     );
-    auto *fopenFunc = Function::Create(fopenType, Function::ExternalWeakLinkage, "fopen", M);
+    auto fopenFunc = M.getOrInsertFunction("fopen", fopenType);
     auto *fopenResult = builder.CreateCall(fopenFunc, SmallVector<Value *>{
       builder.CreateGlobalStringPtr("./fs_profile.txt"),
       builder.CreateGlobalStringPtr("a")
@@ -116,7 +116,7 @@ struct Profile583 : public ModulePass {
       SmallVector<Type *>{builder.getInt8PtrTy()},
       false
     );
-    auto *fcloseFunc = Function::Create(fcloseType, Function::ExternalWeakLinkage, "fclose", M);
+    auto fcloseFunc = M.getOrInsertFunction("fclose", fcloseType);
     builder.CreateCall(fcloseFunc, SmallVector<Value *>{
       builder.CreateLoad(fileHandle)
     });
@@ -149,10 +149,10 @@ struct Profile583 : public ModulePass {
       SmallVector<Type *>{int32PtrTy, int32PtrTy},
       false
     );
-    //auto *getcpuFunc = Function::Create(getcpuType, Function::ExternalWeakLinkage, "getcpu", M);
-    // builder.CreateCall(getcpuFunc, SmallVector<Value *>{
-    //   cpu, numa
-    // });
+    auto getcpuFunc = M.getOrInsertFunction("getcpu", getcpuType);
+    builder.CreateCall(getcpuFunc, SmallVector<Value *>{
+      cpu, numa
+    });
 
     // Printed lines will be in the format "address<tab>isStore<tab>cpu"
     auto *fprintfType = FunctionType::get(
@@ -160,13 +160,13 @@ struct Profile583 : public ModulePass {
       SmallVector<Type *>{builder.getInt8PtrTy()},
       true
     );
-    auto *fprintfFunc = Function::Create(fprintfType, Function::ExternalWeakLinkage, "fprintf", M);
+    auto fprintfFunc = M.getOrInsertFunction("fprintf", fprintfType);
     builder.CreateCall(fprintfFunc, SmallVector<Value *>{
       builder.CreateLoad(fileHandle),
       builder.CreateGlobalStringPtr("%p\t%d\t%u\n"),
       func->getArg(0),
       func->getArg(1),
-      cpu
+      builder.CreateLoad(cpu)
     });
     builder.CreateRetVoid();
 
