@@ -19,20 +19,16 @@ rm -rf *.bc
 # Convert source code to bitcode (IR)
 clang -emit-llvm ${BENCH} -c -o ${1}.bc
 
-opt -load $PATH2PROFILE $PASSPROFILE < ${1}.bc > /dev/null
+opt -load $PATH2PROFILE $PASSPROFILE ${1}.bc -o ${1}.prof.bc 
+clang -pthread ${1}.prof.bc -o ${1}_prof
 
-exit 0 
+exit 0
 
-# Remove old files 
-rm -rf *.bc 
-# Convert source code to bitcode (IR)
-clang -emit-llvm ${BENCH} -c -o ${1}.bc
 # Instrument profiler
 opt -pgo-instr-gen -instrprof ${1}.bc -o ${1}.prof.bc
 # Generate binary executable with profiler embedded
-clang -fprofile-instr-generate ${1}.prof.bc -o ${1}.prof
 # Collect profiling data
-./${1}.prof ${INPUT}
+./${1}.prof
 # Translate raw profiling data into LLVM data format
 llvm-profdata merge -output=pgo.profdata default.profraw
 
@@ -40,10 +36,9 @@ llvm-profdata merge -output=pgo.profdata default.profraw
 opt -pgo-instr-use -pgo-test-profile-file=pgo.profdata -load ${PATH_MYPASS} ${NAME_MYPASS} < ${1}.bc > /dev/null
 
 exit 0
-
-
 # Delete outputs from previous run.
-rm -f default.profraw ${1}_prof ${1}_fplicm ${1}_no_fplicm *.bc ${1}.profdata *_output *.ll
+# rm -f default.profraw ${1}_prof ${1}_fplicm ${1}_no_fplicm *.bc ${1}.profdata *_output *.ll
+# TODO: Is this ^ safe?
 
 # Convert source code to bitcode (IR)
 clang -emit-llvm -c ${1}.cpp -o ${1}.bc
@@ -55,7 +50,10 @@ opt -pgo-instr-gen -instrprof ${1}.ls.bc -o ${1}.ls.prof.bc
 clang -fprofile-instr-generate ${1}.ls.prof.bc -o ${1}_prof
 
 # Generate profiled data
-./${1}_prof > correct_output
+./${1}_prof #> correct_output
+
+exit 0
+
 llvm-profdata merge -o ${1}.profdata default.profraw
 
 # Apply FPLICM

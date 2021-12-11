@@ -52,10 +52,11 @@ struct Profile583 : public ModulePass {
     IRBuilder<> builder(context);
 
     auto *fileHandle = new GlobalVariable(
+      M,
       builder.getInt8PtrTy(),
       false,
       GlobalValue::InternalLinkage,
-      nullptr,
+      ConstantPointerNull::get(builder.getInt8PtrTy()),
       "__handle583"
     );
     auto *ctor = Function::Create(
@@ -71,12 +72,13 @@ struct Profile583 : public ModulePass {
       SmallVector<Type *>{builder.getInt8PtrTy(), builder.getInt8PtrTy()},
       false
     );
-    auto *fopenFunc = Function::Create(fopenType, Function::ExternalLinkage, "__fopen583", M);
+    auto *fopenFunc = Function::Create(fopenType, Function::ExternalWeakLinkage, "fopen", M);
     auto *fopenResult = builder.CreateCall(fopenFunc, SmallVector<Value *>{
       builder.CreateGlobalStringPtr("./fs_profile.txt"),
       builder.CreateGlobalStringPtr("a")
     });
     builder.CreateStore(fopenResult, fileHandle);
+    builder.CreateRetVoid();
     appendToGlobalCtors(M, ctor, 0);
     
     auto *dtor = Function::Create(
@@ -92,10 +94,11 @@ struct Profile583 : public ModulePass {
       SmallVector<Type *>{builder.getInt8PtrTy()},
       false
     );
-    auto *fcloseFunc = Function::Create(fcloseType, Function::ExternalLinkage, "__fclose583", M);
+    auto *fcloseFunc = Function::Create(fcloseType, Function::ExternalWeakLinkage, "fclose", M);
     builder.CreateCall(fcloseFunc, SmallVector<Value *>{
       builder.CreateLoad(fileHandle)
     });
+    builder.CreateRetVoid();
     appendToGlobalDtors(M, dtor, 0);
 
     auto *type = FunctionType::get(
@@ -117,13 +120,13 @@ struct Profile583 : public ModulePass {
     // Create stack variables to call getcpu for retrieving the cpu id
     AllocaInst* cpu = builder.CreateAlloca(builder.getInt32Ty());
     AllocaInst* numa = builder.CreateAlloca(builder.getInt32Ty());
-    DataLayout dataLayout = DataLayout(&M);
+    auto *int32PtrTy = PointerType::get(builder.getInt32Ty(), 0);
     auto *getcpuType = FunctionType::get(
       builder.getInt32Ty(),
-      SmallVector<Type *>{builder.getIntPtrTy(dataLayout), builder.getIntPtrTy(dataLayout)},
+      SmallVector<Type *>{int32PtrTy, int32PtrTy},
       false
     );
-    auto *getcpuFunc = Function::Create(getcpuType, Function::ExternalLinkage, "__getcpu583", M);
+    auto *getcpuFunc = Function::Create(getcpuType, Function::ExternalWeakLinkage, "getcpu", M);
     builder.CreateCall(getcpuFunc, SmallVector<Value *>{
       cpu, numa
     });
@@ -134,7 +137,7 @@ struct Profile583 : public ModulePass {
       SmallVector<Type *>{builder.getInt8PtrTy()},
       true
     );
-    auto *fprintfFunc = Function::Create(fprintfType, Function::ExternalLinkage, "__fprintf583", M);
+    auto *fprintfFunc = Function::Create(fprintfType, Function::ExternalWeakLinkage, "fprintf", M);
     builder.CreateCall(fprintfFunc, SmallVector<Value *>{
       builder.CreateLoad(fileHandle),
       builder.CreateGlobalStringPtr("%p\t%d\t%u\n"),
@@ -142,7 +145,9 @@ struct Profile583 : public ModulePass {
       func->getArg(1),
       cpu
     });
+    builder.CreateRetVoid();
 
+    errs() << "Pass returning without error\n";
     return func;
   }
 
