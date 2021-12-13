@@ -7,8 +7,8 @@
  *  This file contains a configurable cache class
  */
 
-#ifndef PIN_CACHE_H
-#define PIN_CACHE_H
+#ifndef PIN_MDCACHE_H
+#define PIN_MDCACHE_H
 
 #define KILO 1024
 #define MEGA (KILO * KILO)
@@ -16,6 +16,7 @@
 
 typedef UINT64 CACHE_STATS; // type of cache hit/miss counters
 
+#include "mutex.H"
 #include <algorithm>
 #include <sstream>
 #include <vector>
@@ -32,40 +33,6 @@ static string mydecstr(UINT64 v, UINT32 w) {
   string str(o.str());
   return str;
 }
-
-const UINT32 TOMBSTONE = 3;
-
-class mutex {
-  PIN_MUTEX _mu;
-
-public:
-  mutex() { PIN_MutexInit(&_mu); }
-  ~mutex() { PIN_MutexFini(&_mu); }
-  void lock() { PIN_MutexLock(&_mu); }
-  void unlock() { PIN_MutexUnlock(&_mu); }
-};
-
-class lock_guard {
-  mutex &_mu;
-
-public:
-  lock_guard(mutex &mu) : _mu(mu) { _mu.lock(); }
-  ~lock_guard() { _mu.unlock(); }
-};
-
-class ptr_lock_guard {
-  mutex *_mu;
-
-public:
-  ptr_lock_guard(mutex *mu) : _mu(mu) {
-    if (_mu)
-      _mu->lock();
-  }
-  ~ptr_lock_guard() {
-    if (_mu)
-      _mu->unlock();
-  }
-};
 
 /*!
  *  @brief Checks if n is a power of 2.
@@ -150,7 +117,7 @@ public:
   VOID SetAssociativity(UINT32 associativity) { ASSERTX(associativity == 1); }
   UINT32 GetAssociativity(UINT32 associativity) { return 1; }
 
-  UINT32 Find(CACHE_TAG tag) { return (_tag == tag); }
+  ACCESS_RESULT Find(CACHE_TAG tag) { return (_tag == tag); }
   VOID Replace(CACHE_TAG tag) { _tag = tag; }
   VOID Invalidate(CACHE_TAG tag) {}
 };
@@ -185,8 +152,8 @@ public:
   }
   UINT32 GetAssociativity(UINT32 associativity) { return _tagsLastIndex + 1; }
 
-  UINT32 Find(CACHE_TAG tag) {
-    UINT32 result = false;
+  ACCESS_RESULT Find(CACHE_TAG tag) {
+    ACCESS_RESULT result = CACHE_MISS;
 
     for (INT32 index = _tagsLastIndex; index >= 0; index--) {
       // this is an ugly micro-optimization, but it does cause a
@@ -194,9 +161,9 @@ public:
       if (_tags[index] == tag) {
         if (_tags[index].is_dead())
           // If we find a tombstone, it could still be in there.
-          result = TOMBSTONE;
+          result = CACHE_TOMBSTONE;
         else
-          result = true;
+          result = CACHE_HIT;
         goto end;
       }
     }
@@ -251,10 +218,20 @@ public:
   } ACCESS_TYPE;
 
   typedef enum {
+    CACHE_MISS = 0,
+    CACHE_TOMBSTONE = 1,
+    CACHE_HIT = 3,
+  } ACCESS_RESULT;
+
+  typedef enum {
     CACHE_TYPE_ICACHE,
     CACHE_TYPE_DCACHE,
     CACHE_TYPE_NUM
   } CACHE_TYPE;
+
+  UINT32 CALC_RESULT_INDEX(ACCESS_RESULT x) const {
+    return __builtin_popcount(x);
+  }
 
 protected:
   static const UINT32 HIT_MISS_NUM = 3;
@@ -270,11 +247,11 @@ private: // input params
   const UINT32 _lineShift;
   const UINT32 _setIndexMask;
 
-  CACHE_STATS SumAccess(bool hit) const {
+  CACHE_STATS SumAccess(ACCESS_RESULT hit) const {
     CACHE_STATS sum = 0;
 
     for (UINT32 accessType = 0; accessType < ACCESS_TYPE_NUM; accessType++) {
-      sum += _access[accessType][hit];
+      sum += _access[accessType][CALC_RESULT_INDEX(hit)];
     }
 
     return sum;
@@ -294,17 +271,21 @@ public:
   UINT32 Associativity() const { return _associativity; }
   //
   CACHE_STATS Hits(ACCESS_TYPE accessType) const {
-    return _access[accessType][true];
+    return _access[accessType][CALC_RESULT_INDEX(CACHE_HIT)];
   }
   CACHE_STATS Misses(ACCESS_TYPE accessType) const {
-    return _access[accessType][false];
+    return _access[accessType][CALC_RESULT_INDEX(CACHE_MISS)];
+  }
+  CACHE_STATS Tombstones(ACCESS_TYPE accessType) const {
+    return _access[accessType][CALC_RESULT_INDEX(CACHE_TOMBSTONE)];
   }
   CACHE_STATS Accesses(ACCESS_TYPE accessType) const {
-    return Hits(accessType) + Misses(accessType);
+    return Hits(accessType) + Misses(accessType) + Tombstones(accessType);
   }
-  CACHE_STATS Hits() const { return SumAccess(true); }
-  CACHE_STATS Misses() const { return SumAccess(false); }
-  CACHE_STATS Accesses() const { return Hits() + Misses(); }
+  CACHE_STATS Hits() const { return SumAccess(CACHE_HIT); }
+  CACHE_STATS Misses() const { return SumAccess(CACHE_MISS); }
+  CACHE_STATS Tombstones() const { return SumAccess(CACHE_TOMBSTONE); }
+  CACHE_STATS Accesses() const { return Hits() + Misses() + Tombstones; }
 
   VOID SplitAddress(const ADDRINT addr, CACHE_TAG &tag,
                     UINT32 &setIndex) const {
@@ -331,8 +312,9 @@ CACHE_BASE::CACHE_BASE(std::string name, UINT32 cacheSize, UINT32 lineSize,
   ASSERTX(IsPower2(_setIndexMask + 1));
 
   for (UINT32 accessType = 0; accessType < ACCESS_TYPE_NUM; accessType++) {
-    _access[accessType][false] = 0;
-    _access[accessType][true] = 0;
+    _access[accessType][CALC_RESULT_INDEX(CACHE_HIT)] = 0;
+    _access[accessType][CALC_RESULT_INDEX(CACHE_MISS)] = 0;
+    _access[accessType][CALC_RESULT_INDEX(CACHE_TOMBSTONE)] = 0;
   }
 }
 
@@ -364,6 +346,12 @@ string CACHE_BASE::StatsLong(string prefix, CACHE_TYPE cache_type) const {
              fltstr(100.0 * Misses(accessType) / Accesses(accessType), 2, 6) +
              "%\n";
 
+      out +=
+          prefix + ljstr(type + "-Tombstones:    ", headerWidth) +
+          mydecstr(Tombstones(accessType), numberWidth) + "  " +
+          fltstr(100.0 * Tombstones(accessType) / Accesses(accessType), 2, 6) +
+          "%\n";
+
       out += prefix + ljstr(type + "-Accesses:  ", headerWidth) +
              mydecstr(Accesses(accessType), numberWidth) + "  " +
              fltstr(100.0 * Accesses(accessType) / Accesses(accessType), 2, 6) +
@@ -380,6 +368,10 @@ string CACHE_BASE::StatsLong(string prefix, CACHE_TYPE cache_type) const {
   out += prefix + ljstr("Total-Misses:    ", headerWidth) +
          mydecstr(Misses(), numberWidth) + "  " +
          fltstr(100.0 * Misses() / Accesses(), 2, 6) + "%\n";
+
+  out += prefix + ljstr("Total-Tombstones:    ", headerWidth) +
+         mydecstr(Tombstones(), numberWidth) + "  " +
+         fltstr(100.0 * Tombstones() / Accesses(), 2, 6) + "%\n";
 
   out += prefix + ljstr("Total-Accesses:  ", headerWidth) +
          mydecstr(Accesses(), numberWidth) + "  " +
@@ -399,14 +391,15 @@ template <class SET, UINT32 MAX_SETS, UINT32 STORE_ALLOCATION>
 class CACHE : public CACHE_BASE {
 private:
   SET _sets[MAX_SETS];
-  mutex _mu;
+  mutex _mu mutex &_write_mu;
   std::vector<CACHE *> _peers;
 
 public:
   // constructors/destructors
   CACHE(std::string name, UINT32 cacheSize, UINT32 lineSize,
-        UINT32 associativity)
-      : CACHE_BASE(name, cacheSize, lineSize, associativity) {
+        UINT32 associativity, mutex &write_mu)
+      : CACHE_BASE(name, cacheSize, lineSize, associativity),
+        _write_mu(write_mu) {
     ASSERTX(NumSets() <= MAX_SETS);
 
     for (UINT32 i = 0; i < NumSets(); i++) {
@@ -439,10 +432,10 @@ public:
 template <class SET, UINT32 MAX_SETS, UINT32 STORE_ALLOCATION>
 bool CACHE<SET, MAX_SETS, STORE_ALLOCATION>::Access(ADDRINT addr, UINT32 size,
                                                     ACCESS_TYPE accessType) {
-  ptr_lock_guard lock(accessType == ACCESS_TYPE_STORE ? _writer_mu : nullptr);
+  ptr_lock_guard lock(accessType == ACCESS_TYPE_STORE ? _write_mu : nullptr);
   lock_guard lock(_mu);
   const ADDRINT highAddr = addr + size;
-  bool allHit = true;
+  ACCESS_RESULT allHit = CACHE_HIT;
 
   const ADDRINT lineSize = LineSize();
   const ADDRINT notLineMask = ~(lineSize - 1);
@@ -454,21 +447,28 @@ bool CACHE<SET, MAX_SETS, STORE_ALLOCATION>::Access(ADDRINT addr, UINT32 size,
 
     SET &set = _sets[setIndex];
 
-    bool localHit = set.Find(tag);
+    ACCESS_RESULT localHit = set.Find(tag);
     allHit &= localHit;
 
-    // on miss, loads always allocate, stores optionally
-    if ((!localHit) && (accessType == ACCESS_TYPE_LOAD ||
-                        STORE_ALLOCATION == CACHE_ALLOC::STORE_ALLOCATE)) {
+    // on miss and tombstone, loads always allocate, stores optionally
+    if ((localHit != CACHE_HIT) &&
+        (accessType == ACCESS_TYPE_LOAD ||
+         STORE_ALLOCATION == CACHE_ALLOC::STORE_ALLOCATE)) {
       set.Replace(tag);
     }
 
     addr = (addr & notLineMask) + lineSize; // start of next cache line
   } while (addr < highAddr);
 
-  _access[accessType][allHit]++;
+  if (accessType == ACCESS_TYPE_STORE) {
+    for (auto *peer : peers) {
+      peer->Invalidate(addr, size);
+    }
+  }
 
-  return allHit;
+  _access[accessType][CALC_RESULT_INDEX(allHit)]++;
+
+  return allHit == CACHE_HIT;
 }
 
 /*!
@@ -477,7 +477,7 @@ bool CACHE<SET, MAX_SETS, STORE_ALLOCATION>::Access(ADDRINT addr, UINT32 size,
 template <class SET, UINT32 MAX_SETS, UINT32 STORE_ALLOCATION>
 bool CACHE<SET, MAX_SETS, STORE_ALLOCATION>::AccessSingleLine(
     ADDRINT addr, ACCESS_TYPE accessType) {
-  ptr_lock_guard lock(accessType == ACCESS_TYPE_STORE ? _writer_mu : nullptr);
+  ptr_lock_guard lock(accessType == ACCESS_TYPE_STORE ? _write_mu : nullptr);
   lock_guard lock(_mu);
   CACHE_TAG tag;
   UINT32 setIndex;
@@ -486,22 +486,22 @@ bool CACHE<SET, MAX_SETS, STORE_ALLOCATION>::AccessSingleLine(
 
   SET &set = _sets[setIndex];
 
-  UINT32 hit = set.Find(tag);
+  ACCESS_RESULT hit = set.Find(tag);
 
   // on miss, loads always allocate, stores optionally
-  if ((hit != true) && (accessType == ACCESS_TYPE_LOAD ||
-                        STORE_ALLOCATION == CACHE_ALLOC::STORE_ALLOCATE)) {
+  if ((hit != CACHE_HIT) && (accessType == ACCESS_TYPE_LOAD ||
+                             STORE_ALLOCATION == CACHE_ALLOC::STORE_ALLOCATE)) {
     set.Replace(tag);
   }
 
-  _access[accessType][hit]++;
+  _access[accessType][CALC_RESULT_INDEX(hit)]++;
 
   if (accessType == ACCESS_TYPE_STORE) {
     for (auto *peer : peers)
       peer->InvalidateSingleLine(addr);
   }
 
-  return hit == true;
+  return hit == CACHE_HIT;
 }
 
 /*!
@@ -531,7 +531,31 @@ template <class SET, UINT32 MAX_SETS, UINT32 STORE_ALLOCATION>
 void CACHE<SET, MAX_SETS, STORE_ALLOCATION>::Invalidate(ADDRINT addr,
                                                         UINT32 size) {
   lock_guard lock(_mu);
-  assert(false);
+  const ADDRINT highAddr = addr + size;
+  ACCESS_RESULT allHit = CACHE_HIT;
+
+  const ADDRINT lineSize = LineSize();
+  const ADDRINT notLineMask = ~(lineSize - 1);
+  do {
+    CACHE_TAG tag;
+    UINT32 setIndex;
+
+    SplitAddress(addr, tag, setIndex);
+
+    SET &set = _sets[setIndex];
+
+    ACCESS_RESULT localHit = set.Find(tag);
+    allHit &= localHit;
+
+    // If it's in the cache, remove it
+    if (localHit == CACHE_HIT) {
+      set.Invalidate(tag);
+    }
+
+    addr = (addr & notLineMask) + lineSize; // start of next cache line
+  } while (addr < highAddr);
+
+  _access[ACCESS_TYPE_INVALIDATE][CALC_RESULT_INDEX(allHit)]++;
 }
 
 /*!
@@ -547,12 +571,13 @@ void CACHE<SET, MAX_SETS, STORE_ALLOCATION>::InvalidateSingleLine(
   UINT32 setIndex;
   SplitAddress(addr, tag, setIndex);
   SET &set = _sets[setIndex];
-  UINT32 hit = set.Find(tag);
-  if (hit == true) {
+  ACCESS_RESULT hit = set.Find(tag);
+  // If it's in the cache, invalidate it
+  if (hit == CACHE_HIT) {
     set.Invalidate(tag);
   }
 
-  _access[ACCESS_TYPE_INVALIDATE][hit]++;
+  _access[ACCESS_TYPE_INVALIDATE][CALC_RESULT_INDEX(hit)]++;
 }
 
 // define shortcuts
@@ -561,4 +586,4 @@ void CACHE<SET, MAX_SETS, STORE_ALLOCATION>::InvalidateSingleLine(
 #define CACHE_ROUND_ROBIN(MAX_SETS, MAX_ASSOCIATIVITY, ALLOCATION)             \
   CACHE<CACHE_SET::ROUND_ROBIN<MAX_ASSOCIATIVITY>, MAX_SETS, ALLOCATION>
 
-#endif // PIN_CACHE_H
+#endif // PIN_MDCACHE_H
