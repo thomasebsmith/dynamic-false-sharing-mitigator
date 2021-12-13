@@ -3,8 +3,8 @@ set -Eeuo pipefail
 
 REPO_ROOT=$(pwd)
 BENCHNAME=sharedStruct # Change if necessary
-BENCH=~/group21/bench/${BENCHNAME} # Change if necessary
-BENCH=~/group21/bench/${BENCHNAME} # Change if necessary
+BENCH=${REPO_ROOT}/bench/${BENCHNAME}
+BENCH=${REPO_ROOT}/bench/${BENCHNAME} 
 CACHELINESIZE=64 # Change if necessary
 
 # Set up Intel Pin pinatrace
