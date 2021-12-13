@@ -41,25 +41,39 @@ void InterferenceDetector::recordAccess(const std::string& rw, const std::string
 
     uint64_t cacheline_index = destAddrNum / cacheline_size;
     CacheLine& cacheline = cachelines[cacheline_index];
-    for (const auto& access : cacheline.accesses) {
-        // Check for interferences
-        // If the accesses are from the same thread, it is not an interference
-        if (access.threadId == threadIdNum) {
+    cacheline.accesses[threadIdNum];
+    for (auto& threadAccesses : cacheline.accesses) {
+        if (threadAccesses.first == threadIdNum) {
+            auto access_it = threadAccesses.second.emplace(destAddrNum, CacheLine::Access{isWrite, accessSizeNum});
+            if (!access_it.second) {
+                // Mark as write if it wasn't before. TODO: Might react to this.
+                access_it.first->second.isWrite = (access_it.first->second.isWrite) || isWrite; 
+                // Access already recorded
+                if (access_it.first->second.accessSize >= accessSizeNum) {
+                    return;
+                } else {
+                    access_it.first->second.accessSize = accessSizeNum;
+                }
+            }
+            // std::cout << std::hex << "Recorded access to " << destAddrNum << " of size " << accessSizeNum 
+            //           << " for thread " << threadIdNum << " in cacheline " << cacheline_index << std::endl;
             continue;
         }
-        // If the access ranges overlap, it is not false sharing
-        if (access.destAddr < destAddrNum + accessSizeNum ||
-                destAddrNum < access.destAddr + access.accessSize) {
-            continue;
+        for (const auto& access : threadAccesses.second) {
+            // If the access ranges overlap, it is not false sharing
+            if ((access.first >= destAddrNum && access.first < destAddrNum + accessSizeNum) ||
+                (destAddrNum >= access.first && destAddrNum < access.first + access.second.accessSize)) {
+                continue;
+            }
+            interferences.push_back({access.first, destAddrNum});
         }
-        interferences.push_back({access.destAddr, destAddrNum});
     }
-    cacheline.accesses.push_back(
-        CacheLine::Access{isWrite, destAddrNum, accessSizeNum, threadIdNum}
-    );
 }
 
 void InterferenceDetector::outputInterferences() 
-{
-
+{   
+    std::cout << interferences.size() << " interferences found: " << std::endl;
+    for (const auto& interference : interferences) {
+        std::cout << std::hex << std::get<0>(interference) << "\t" << std::get<1>(interference) << std::endl;
+    }
 }

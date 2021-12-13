@@ -5,6 +5,7 @@
 #include <unordered_map>
 #include <vector>
 #include <tuple>
+#include <set>
 
 class InterferenceDetector {
 public:
@@ -20,12 +21,15 @@ private:
 
     struct CacheLine {
         struct Access {
-            bool is_write;
-            uint64_t destAddr;
+            bool isWrite;
+            // uint64_t destAddr;
             uint64_t accessSize;
-            uint64_t threadId;
+            // uint64_t threadId;
         };
-        std::vector<Access> accesses;
+        // std::vector<Access> accesses;
+
+        // thread id -> destAddr -> Access
+        std::unordered_map<uint64_t, std::unordered_map<uint64_t, Access>> accesses;
     };
     std::unordered_map<uint64_t, CacheLine> cachelines;
 

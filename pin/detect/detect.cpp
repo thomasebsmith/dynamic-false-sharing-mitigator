@@ -67,6 +67,10 @@ void process_pinatrace(const std::string& pinatrace_file, uint64_t cacheline_siz
             std::cout << "Error processing line #" << (linenum - 1) << ": " << e.what() << std::endl;
             continue; // ignore bad access
         }
+
+        if (linenum % 100000 == 0) {
+            std::cout << "Processed " << linenum << " lines" << std::endl;
+        }
     }
 
     detector.outputInterferences();
