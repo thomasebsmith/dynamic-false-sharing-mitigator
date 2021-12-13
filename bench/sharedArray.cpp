@@ -54,14 +54,18 @@ int main(int argc, char *argv[]) {
   pthread_t thread_1;
   pthread_t thread_2;
 
+  const int NUM_RUNS = 100;
+
   print_cpu("main");
 
   //-------------START--------Serial Computation-------------------------------
 
   printf("\nDoing serial computation of expensive function\n");
   clock_gettime(CLOCK_REALTIME, &tpBegin1);
-  expensive_function((void *)&first_elem);
-  expensive_function((void *)&bad_elem);
+  for (int i = 0; i < NUM_RUNS; i++) {
+    expensive_function((void *)&first_elem);
+    expensive_function((void *)&bad_elem);
+  }
   clock_gettime(CLOCK_REALTIME, &tpEnd1);
 
   //-------------END----------Serial Computation-------------------------------
@@ -71,10 +75,12 @@ int main(int argc, char *argv[]) {
   printf("\nDoing parallel computation with false sharing (two expensive "
          "functions)\n");
   clock_gettime(CLOCK_REALTIME, &tpBegin2);
-  pthread_create(&thread_1, NULL, expensive_function, (void *)&first_elem);
-  pthread_create(&thread_2, NULL, expensive_function, (void *)&bad_elem);
-  pthread_join(thread_1, NULL);
-  pthread_join(thread_2, NULL);
+  for (int i = 0; i < NUM_RUNS; i++) {
+    pthread_create(&thread_1, NULL, expensive_function, (void *)&first_elem);
+    pthread_create(&thread_2, NULL, expensive_function, (void *)&bad_elem);
+    pthread_join(thread_1, NULL);
+    pthread_join(thread_2, NULL);
+  }
   clock_gettime(CLOCK_REALTIME, &tpEnd2);
 
   //-------------END----------parallel computation with False Sharing----------
@@ -84,10 +90,12 @@ int main(int argc, char *argv[]) {
   printf("\nDoing parallel computation with NO false sharing (two expensive "
          "functions)\n");
   clock_gettime(CLOCK_REALTIME, &tpBegin3);
-  pthread_create(&thread_1, NULL, expensive_function, (void *)&first_elem);
-  pthread_create(&thread_2, NULL, expensive_function, (void *)&good_elem);
-  pthread_join(thread_1, NULL);
-  pthread_join(thread_2, NULL);
+  for (int i = 0; i < NUM_RUNS; i++) {
+    pthread_create(&thread_1, NULL, expensive_function, (void *)&first_elem);
+    pthread_create(&thread_2, NULL, expensive_function, (void *)&good_elem);
+    pthread_join(thread_1, NULL);
+    pthread_join(thread_2, NULL);
+  }
   clock_gettime(CLOCK_REALTIME, &tpEnd3);
 
   //-------------END--------parallel computation without False Sharing---------
@@ -102,9 +110,12 @@ int main(int argc, char *argv[]) {
   time1 = compute(tpBegin1, tpEnd1);
   time2 = compute(tpBegin2, tpEnd2);
   time3 = compute(tpBegin3, tpEnd3);
-  printf("Time take with false sharing      : %f ms\n", time2);
-  printf("Time taken without false sharing  : %f ms\n", time3);
-  printf("Time taken in Sequential computing : %f ms\n", time1);
+  printf("Average time taken over %d runs with false sharing      : %f ms\n",
+         NUM_RUNS, time2 / NUM_RUNS);
+  printf("Average time taken over %d runs without false sharing  : %f ms\n",
+         NUM_RUNS, time3 / NUM_RUNS);
+  printf("Average time taken over %d runs in Sequential computing : %f ms\n",
+         NUM_RUNS, time1 / NUM_RUNS);
 
   //------------END------------------OUTPUT STATS------------------------------
 
