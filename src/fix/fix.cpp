@@ -13,6 +13,10 @@
 
 using namespace llvm;
 
+// TODO: Is this accurate?
+// Also, make sure this is a power of 2.
+static const size_t cacheLineSize = 64; // in bytes
+
 // TODO: This is a hack
 static bool isLocalToModule(StructType *type) {
   return type->hasName() && type->getName().contains("(anonymous namespace)");
@@ -46,6 +50,69 @@ std::istream &operator>>(std::istream &in, Conflict &conflict) {
   return in >> conflict.entry1 >> conflict.entry2 >> conflict.priority;
 }
 
+namespace {
+struct PaddedAggregate {
+  Type *type;
+  std::unordered_map<unsigned int, unsigned int> newElementByOldElement;
+};
+}
+
+static PaddedAggregate createPaddedStructType(
+  Module &M,
+  const StructType *oldType,
+  const StructLayout *oldLayout,
+  const std::set<unsigned int> &conflictingElements
+) {
+  assert(oldType->hasName());
+  SmallVector<Type *> newTypes;
+  PaddedAggregate padded{};
+  size_t paddingBytesSoFar = 0;
+  auto *int8Ty = Type::getInt8Ty(M.getContext());
+  for (unsigned int i = 0; i < oldType->getNumElements(); ++i) {
+    size_t alignSoFar = oldLayout->getElementOffset(i) + paddingBytesSoFar;
+    if (conflictingElements.count(i) > 0 && alignSoFar % cacheLineSize != 0) {
+      // We need to add padding to align this to a cache line boundary.
+      size_t paddingBytes = (alignSoFar / cacheLineSize + 1) * cacheLineSize - alignSoFar;
+      newTypes.push_back(ArrayType::get(int8Ty, paddingBytes));
+      alignSoFar += paddingBytes;
+      assert(alignSoFar % cacheLineSize == 0);
+    }
+    newTypes.push_back(oldType->getElementType(i));
+    padded.newElementByOldElement.emplace(i, static_cast<unsigned int>(newTypes.size() - 1));
+  }
+
+  auto newName = oldType->getName().str() + ".(583padded)";
+  padded.type = StructType::create(newTypes, newName);
+  return padded;
+}
+
+static void replaceTypes(
+  Module &M,
+  std::unordered_map<std::string, PaddedAggregate> &replacements
+) {
+  // Rewrite all uses of key types to use value types instead.
+  // Need to fix the following instruction types (at least):
+  //  - extractvalue
+  //  - insertvalue
+  //  - alloca
+  //  - getelementptr
+  // Also, need to fix:
+  //  - Pointers to this type (?)
+  //  - Other structs/arrays that contain this struct type
+  //  - Function arguments
+  //  - Global variables
+
+  /*
+  Algorithm:
+   (1) Create map (Type) -> (Types that contain Type (pointers, structs, arrays, ...)).
+   (2) Use map from (1) to create derived types that use newTypes instead of oldTypes.
+   (3) Create map (Type) -> (Insts that use Type).
+   (4) Use map from (3) to replace oldTypes with newTypes in instructions.
+   (5) Go through all functions and fix argument types/return types to use newTypes.
+   (6) Change all global variables to use newTypes instead of oldTypes.
+  */
+}
+
 namespace{
 struct Fix583 : public ModulePass {
   static char ID;
@@ -54,9 +121,6 @@ struct Fix583 : public ModulePass {
   // Maybe consider doing something similar to profiling passes.
   static const std::string inputFile;
 
-  // TODO: Is this accurate?
-  // Also, make sure this is a power of 2.
-  static const size_t cacheLineSize = 64; // in bytes
 
   std::vector<Conflict> getPotentialFS() {
     std::ifstream in(inputFile);
@@ -91,13 +155,15 @@ struct Fix583 : public ModulePass {
           }
         }
       } else {
-        // TODO: Can this be more efficient?
+        // TODO: Is there a way to know which global comes later?
+        // If so, we could just realign that one.
         global1->setAlignment(Align(cacheLineSize));
         global2->setAlignment(Align(cacheLineSize));
         changed = true;
       }
     }
 
+    std::unordered_map<std::string, PaddedAggregate> replacements;
     auto &dataLayout = M.getDataLayout();
     for (auto &pair : structAccesses) {
       auto *type = StructType::getTypeByName(M.getContext(), pair.first);
@@ -107,25 +173,13 @@ struct Fix583 : public ModulePass {
       for (size_t offset : pair.second) {
         conflictingElements.insert(layout->getElementContainingOffset(offset));
       }
-      // Create a new, padded struct type.
-      // Record a map from (old member offset) => (new member offset).
       if (conflictingElements.size() > 1) {
-        std::vector<Type *> types(type->element_begin(), type->element_end());
-        for (unsigned int element : conflictingElements) {
-          // TODO
-        }
-        // Rewrite all old struct uses to use the new struct type.
-        // Need to fix the following instruction types:
-        //  - extractvalue
-        //  - insertvalue
-        //  - alloca
-        //  - getelementptr
-        // Also, need to fix:
-        //  - Other structs/arrays that contains this struct type
-        //  - Function arguments
-        //  - Global variables
-        changed = true;
+        replacements.emplace(type->getName(), createPaddedStructType(M, type, layout, conflictingElements));
       }
+    }
+    if (replacements.size() > 0) {
+      replaceTypes(M, replacements);
+      changed = true;
     }
     return changed;
   }

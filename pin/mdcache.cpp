@@ -13,7 +13,8 @@
 #include <iostream>
 #include <fstream>
 
-#include "dcache.H"
+#include "mdcache.H"
+#include "mutex.H"
 #include "pin_profile.H"
 using std::cerr;
 using std::endl;
@@ -26,7 +27,8 @@ std::ofstream outFile;
 /* Commandline Switches */
 /* ===================================================================== */
 
-KNOB< string > KnobOutputFile(KNOB_MODE_WRITEONCE, "pintool", "o", "dcache.out", "specify dcache file name");
+KNOB<string> KnobOutputFile(KNOB_MODE_WRITEONCE, "pintool", "o", "mdcache.out",
+                            "specify mdcache file name");
 KNOB< BOOL > KnobTrackLoads(KNOB_MODE_WRITEONCE, "pintool", "tl", "0", "track individual loads -- increases profiling time");
 KNOB< BOOL > KnobTrackStores(KNOB_MODE_WRITEONCE, "pintool", "ts", "0", "track individual stores -- increases profiling time");
 KNOB< UINT32 > KnobThresholdHit(KNOB_MODE_WRITEONCE, "pintool", "rh", "100", "only report memops with hit count above threshold");
