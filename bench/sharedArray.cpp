@@ -15,8 +15,8 @@ struct timespec tpBegin1, tpEnd1, tpBegin2, tpEnd2, tpBegin3,
 
 void print_cpu(const char *label) {
   unsigned cpu, numa;
-  getcpu(&cpu, &numa);
-  printf("[%s] cpu: %u, numa: %u\n", label, cpu, numa);
+  // getcpu(&cpu, &numa);
+  // printf("[%s] cpu: %u, numa: %u\n", label, cpu, numa);
 }
 
 double
