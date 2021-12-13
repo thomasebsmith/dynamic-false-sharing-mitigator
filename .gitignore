@@ -10,3 +10,4 @@ src/*.out
 .vscode/
 pin/detect/detect 
 pin/detect/*.out
+!pin/detect/pinatrace_sample.out
