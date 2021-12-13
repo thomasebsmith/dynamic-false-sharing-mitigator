@@ -39,6 +39,13 @@ int main(int argc, char **argv) {
 
 void process_pinatrace(const std::string& pinatrace_file, uint64_t cacheline_size) {
     std::ifstream infile(pinatrace_file);
+    std::string output_file = pinatrace_file + ".interferences";
+    std::ofstream outfile(output_file);
+    if (!outfile.is_open()) {
+        std::cout << "Could not open output file: " << output_file << std::endl;
+        exit(1);
+    }
+
     std::string line;
 
     // Columns of the pinatrace file:
@@ -73,6 +80,7 @@ void process_pinatrace(const std::string& pinatrace_file, uint64_t cacheline_siz
         }
     }
 
-    detector.outputInterferences();
+    detector.outputInterferences(outfile);
+    std::cout << "Outputted interferences to file: " << output_file << std::endl;
 }
 

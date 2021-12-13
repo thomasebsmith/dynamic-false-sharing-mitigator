@@ -70,10 +70,10 @@ void InterferenceDetector::recordAccess(const std::string& rw, const std::string
     }
 }
 
-void InterferenceDetector::outputInterferences() 
+void InterferenceDetector::outputInterferences(std::ostream& out) 
 {   
-    std::cout << interferences.size() << " interferences found: " << std::endl;
+    std::cout << "Number of interferences: " << interferences.size() << std::endl;
     for (const auto& interference : interferences) {
-        std::cout << std::hex << std::get<0>(interference) << "\t" << std::get<1>(interference) << std::endl;
+        out << std::hex << std::get<0>(interference) << "\t" << std::get<1>(interference) << std::endl;
     }
 }

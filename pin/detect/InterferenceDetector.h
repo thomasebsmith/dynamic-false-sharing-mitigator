@@ -6,6 +6,7 @@
 #include <vector>
 #include <tuple>
 #include <set>
+#include <ostream>
 
 class InterferenceDetector {
 public:
@@ -14,7 +15,7 @@ public:
     void recordAccess(const std::string& rw, const std::string& destAddr, 
         const std::string& accessSize, const std::string& threadId);
 
-    void outputInterferences();
+    void outputInterferences(std::ostream& out);
 
 private:
     uint64_t cacheline_size;
@@ -22,12 +23,8 @@ private:
     struct CacheLine {
         struct Access {
             bool isWrite;
-            // uint64_t destAddr;
             uint64_t accessSize;
-            // uint64_t threadId;
         };
-        // std::vector<Access> accesses;
-
         // thread id -> destAddr -> Access
         std::unordered_map<uint64_t, std::unordered_map<uint64_t, Access>> accesses;
     };
