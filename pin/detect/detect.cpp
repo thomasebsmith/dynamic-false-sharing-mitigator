@@ -59,9 +59,10 @@ void process_pinatrace(const std::string& pinatrace_file, uint64_t cacheline_siz
             std::cout << '\t' << pc << '\t' << rw << '\t' << dest << '\t' << sz << '\t' << tid << '\t' << val << std::endl;
             continue;
         }
-        detector.recordAccess(rw, dest, sz, tid);
+        detector.recordAccess(linenum, rw, dest, sz, tid);
         ++linenum;
     }
 
     detector.outputInterferences();
 }
+
