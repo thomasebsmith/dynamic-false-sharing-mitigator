@@ -2,3 +2,8 @@ build/
 *.bc
 fs_profile.txt
 fs_globals.txt
+bench/sharedArray
+bench/sharedStruct 
+bench/*prof 
+src/*prof*
+src/*.out
