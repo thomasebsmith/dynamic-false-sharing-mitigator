@@ -16,7 +16,7 @@ struct SharedStruct {
 FalseSharedStruct false_shared_data;
 SharedStruct shared_data;
 
-const int NUM_LOOPS = 10000000;
+const int NUM_LOOPS = 10;
 const int NUM_RUNS = 1;
 
 double compute(struct timespec start, struct timespec end) {

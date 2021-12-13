@@ -38,7 +38,7 @@ void *expensive_function(void *param) {
   print_cpu("expensive_function begin");
   int index = *((int *)param);
   int i;
-  for (i = 0; i < 1000000; i++)
+  for (i = 0; i < 10; i++)
     array[index] += 1;
   print_cpu("expensive_function end");
   return nullptr;
@@ -54,7 +54,7 @@ int main(int argc, char *argv[]) {
   pthread_t thread_1;
   pthread_t thread_2;
 
-  const int NUM_RUNS = 100;
+  const int NUM_RUNS = 10;
 
   print_cpu("main");
 
