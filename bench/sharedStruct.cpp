@@ -3,6 +3,7 @@
 #include <thread>
 #include <time.h>
 
+namespace {
 struct FalseSharedStruct {
   volatile int thread1Data = 0;
   volatile int thread2Data = 0;
@@ -12,6 +13,7 @@ struct SharedStruct {
   alignas(64) volatile int thread1Data = 0;
   alignas(64) volatile int thread2Data = 0;
 };
+}
 
 FalseSharedStruct false_shared_data;
 SharedStruct shared_data;
