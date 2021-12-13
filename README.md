@@ -8,3 +8,12 @@
 - `src`   - Source code for the compiler passes
   - `profile` - First (analysis) pass
   - `fix`     - Second pass to fix false sharing
+
+## Setup
+1. Clone this repo
+2. Download Intel Pin and unzip it with `tar -xzvf`.
+```
+wget https://software.intel.com/sites/landingpage/pintool/downloads/pin-3.21-98484-ge7cd811fd-gcc-linux.tar.gz
+```
+3. Look at `run.sh` script. 
+  - Set `PATH_TO_PIN`, `BENCHNAME`, `CACHELINESIZE`, etc., correctly.
