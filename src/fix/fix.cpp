@@ -13,6 +13,10 @@
 
 using namespace llvm;
 
+// TODO: Is this accurate?
+// Also, make sure this is a power of 2.
+static const size_t cacheLineSize = 64; // in bytes
+
 // TODO: This is a hack
 static bool isLocalToModule(StructType *type) {
   return type->hasName() && type->getName().contains("(anonymous namespace)");
@@ -46,6 +50,63 @@ std::istream &operator>>(std::istream &in, Conflict &conflict) {
   return in >> conflict.entry1 >> conflict.entry2 >> conflict.priority;
 }
 
+namespace {
+struct PaddedStruct {
+  StructType *type;
+  std::unordered_map<unsigned int, unsigned int> newElementByOldElement;
+};
+}
+
+static PaddedStruct createPaddedStructType(
+  Module &M,
+  const StructType *oldType,
+  const StructLayout *oldLayout,
+  const std::set<unsigned int> &conflictingElements
+) {
+  assert(oldType->hasName());
+  SmallVector<Type *> newTypes;
+  PaddedStruct padded{};
+  size_t paddingBytesSoFar = 0;
+  auto *int8Ty = Type::getInt8Ty(M.getContext());
+  for (unsigned int i = 0; i < oldType->getNumElements(); ++i) {
+    size_t alignSoFar = oldLayout->getElementOffset(i) + paddingBytesSoFar;
+    if (conflictingElements.count(i) > 0 && alignSoFar % cacheLineSize != 0) {
+      // We need to add padding to align this to a cache line boundary.
+      size_t paddingBytes = (alignSoFar / cacheLineSize + 1) * cacheLineSize - alignSoFar;
+      newTypes.push_back(ArrayType::get(int8Ty, paddingBytes));
+      alignSoFar += paddingBytes;
+      assert(alignSoFar % cacheLineSize == 0);
+    }
+    newTypes.push_back(oldType->getElementType(i));
+    padded.newElementByOldElement.emplace(i, static_cast<unsigned int>(newTypes.size() - 1));
+  }
+
+  auto newName = oldType->getName().str() + ".(583padded)";
+  padded.type = StructType::create(newTypes, newName);
+  return padded;
+}
+
+static void padStruct(
+  Module &M,
+  const StructType *oldType,
+  const StructLayout *oldLayout,
+  const std::set<unsigned int> &conflictingElements
+) {
+  auto padded = createPaddedStructType(M, oldType, oldLayout, conflictingElements);
+  auto *newType = padded.type;
+  auto &newElementByOldElement = padded.newElementByOldElement;
+  // Rewrite all old struct uses to use the new struct type.
+  // Need to fix the following instruction types:
+  //  - extractvalue
+  //  - insertvalue
+  //  - alloca
+  //  - getelementptr
+  // Also, need to fix:
+  //  - Other structs/arrays that contains this struct type
+  //  - Function arguments
+  //  - Global variables
+}
+
 namespace{
 struct Fix583 : public ModulePass {
   static char ID;
@@ -54,9 +115,6 @@ struct Fix583 : public ModulePass {
   // Maybe consider doing something similar to profiling passes.
   static const std::string inputFile;
 
-  // TODO: Is this accurate?
-  // Also, make sure this is a power of 2.
-  static const size_t cacheLineSize = 64; // in bytes
 
   std::vector<Conflict> getPotentialFS() {
     std::ifstream in(inputFile);
@@ -107,23 +165,8 @@ struct Fix583 : public ModulePass {
       for (size_t offset : pair.second) {
         conflictingElements.insert(layout->getElementContainingOffset(offset));
       }
-      // Create a new, padded struct type.
-      // Record a map from (old member offset) => (new member offset).
       if (conflictingElements.size() > 1) {
-        std::vector<Type *> types(type->element_begin(), type->element_end());
-        for (unsigned int element : conflictingElements) {
-          // TODO
-        }
-        // Rewrite all old struct uses to use the new struct type.
-        // Need to fix the following instruction types:
-        //  - extractvalue
-        //  - insertvalue
-        //  - alloca
-        //  - getelementptr
-        // Also, need to fix:
-        //  - Other structs/arrays that contains this struct type
-        //  - Function arguments
-        //  - Global variables
+        padStruct(M, type, layout, conflictingElements);
         changed = true;
       }
     }
