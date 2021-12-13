@@ -8,3 +8,5 @@ bench/*prof
 src/*prof*
 src/*.out
 .vscode/
+pin/detect/detect 
+pin/detect/*.out
