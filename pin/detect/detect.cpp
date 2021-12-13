@@ -52,15 +52,21 @@ void process_pinatrace(const std::string& pinatrace_file, uint64_t cacheline_siz
         std::istringstream iss(line);
 
         bool parseError = !(iss >> pc >> rw >> dest >> sz >> tid >> val);
+        ++linenum;
         if (!pc.empty() && pc[0] == '#') 
             continue; // filter out comments
         if (parseError) {
-            std::cout << "Line #" << linenum << " formatted incorrectly:" << std::endl;
+            std::cout << "Line #" << (linenum - 1) << " formatted incorrectly:" << std::endl;
             std::cout << '\t' << pc << '\t' << rw << '\t' << dest << '\t' << sz << '\t' << tid << '\t' << val << std::endl;
             continue;
         }
-        detector.recordAccess(linenum, rw, dest, sz, tid);
-        ++linenum;
+        
+        try {
+            detector.recordAccess(rw, dest, sz, tid);
+        } catch (std::runtime_error& e) {
+            std::cout << "Error processing line #" << (linenum - 1) << ": " << e.what() << std::endl;
+            continue; // ignore bad access
+        }
     }
 
     detector.outputInterferences();
