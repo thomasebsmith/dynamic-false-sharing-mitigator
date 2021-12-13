@@ -51,13 +51,13 @@ std::istream &operator>>(std::istream &in, Conflict &conflict) {
 }
 
 namespace {
-struct PaddedStruct {
-  StructType *type;
+struct PaddedAggregate {
+  Type *type;
   std::unordered_map<unsigned int, unsigned int> newElementByOldElement;
 };
 }
 
-static PaddedStruct createPaddedStructType(
+static PaddedAggregate createPaddedStructType(
   Module &M,
   const StructType *oldType,
   const StructLayout *oldLayout,
@@ -65,7 +65,7 @@ static PaddedStruct createPaddedStructType(
 ) {
   assert(oldType->hasName());
   SmallVector<Type *> newTypes;
-  PaddedStruct padded{};
+  PaddedAggregate padded{};
   size_t paddingBytesSoFar = 0;
   auto *int8Ty = Type::getInt8Ty(M.getContext());
   for (unsigned int i = 0; i < oldType->getNumElements(); ++i) {
@@ -86,25 +86,31 @@ static PaddedStruct createPaddedStructType(
   return padded;
 }
 
-static void padStruct(
+static void replaceTypes(
   Module &M,
-  const StructType *oldType,
-  const StructLayout *oldLayout,
-  const std::set<unsigned int> &conflictingElements
+  std::unordered_map<std::string, PaddedAggregate> &replacements
 ) {
-  auto padded = createPaddedStructType(M, oldType, oldLayout, conflictingElements);
-  auto *newType = padded.type;
-  auto &newElementByOldElement = padded.newElementByOldElement;
-  // Rewrite all old struct uses to use the new struct type.
-  // Need to fix the following instruction types:
+  // Rewrite all uses of key types to use value types instead.
+  // Need to fix the following instruction types (at least):
   //  - extractvalue
   //  - insertvalue
   //  - alloca
   //  - getelementptr
   // Also, need to fix:
-  //  - Other structs/arrays that contains this struct type
+  //  - Pointers to this type (?)
+  //  - Other structs/arrays that contain this struct type
   //  - Function arguments
   //  - Global variables
+
+  /*
+  Algorithm:
+   (1) Create map (Type) -> (Types that contain Type (pointers, structs, arrays, ...)).
+   (2) Use map from (1) to create derived types that use newTypes instead of oldTypes.
+   (3) Create map (Type) -> (Insts that use Type).
+   (4) Use map from (3) to replace oldTypes with newTypes in instructions.
+   (5) Go through all functions and fix argument types/return types to use newTypes.
+   (6) Change all global variables to use newTypes instead of oldTypes.
+  */
 }
 
 namespace{
@@ -149,13 +155,15 @@ struct Fix583 : public ModulePass {
           }
         }
       } else {
-        // TODO: Can this be more efficient?
+        // TODO: Is there a way to know which global comes later?
+        // If so, we could just realign that one.
         global1->setAlignment(Align(cacheLineSize));
         global2->setAlignment(Align(cacheLineSize));
         changed = true;
       }
     }
 
+    std::unordered_map<std::string, PaddedAggregate> replacements;
     auto &dataLayout = M.getDataLayout();
     for (auto &pair : structAccesses) {
       auto *type = StructType::getTypeByName(M.getContext(), pair.first);
@@ -166,9 +174,12 @@ struct Fix583 : public ModulePass {
         conflictingElements.insert(layout->getElementContainingOffset(offset));
       }
       if (conflictingElements.size() > 1) {
-        padStruct(M, type, layout, conflictingElements);
-        changed = true;
+        replacements.emplace(type->getName(), createPaddedStructType(M, type, layout, conflictingElements));
       }
+    }
+    if (replacements.size() > 0) {
+      replaceTypes(M, replacements);
+      changed = true;
     }
     return changed;
   }
