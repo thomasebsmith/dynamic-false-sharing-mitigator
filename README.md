@@ -10,6 +10,7 @@
   - `fix`     - Second pass to fix false sharing
 
 ## Setup
+*Prerequisites*: LLVM is installed on the machine
 1. Clone this repo
 2. Download Intel Pin and unzip it with `tar -xzvf`.
 ```
