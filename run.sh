@@ -40,20 +40,27 @@ echo
 
 # Run detect on pinatrace.out to get a list of interferences
 cd pin/detect 
+make clean
 make detect 
 ./detect ${REPO_ROOT}/pinatrace.out $CACHELINESIZE
 DETECT_OUTPUT_FNAME=pinatrace.out.cacheline${CACHELINESIZE}.interferences
 echo "Successfully ran detect to produce ${DETECT_OUTPUT_FNAME}"
 echo
 
+# TODO: Compile mdcache and run it to get mdcache.out
 cd ${REPO_ROOT}
-# TODO: Set up mdcache, run mdcache.
-# 	Build mapaddr
-# 	Feed fs_globals.txt, interferences, and mdcache output to mapaddr
+touch mdcache.out 
+
+# Run MapAddr to get mapped_conflicts.out
+cd pin/MapAddr 
+make clean 
+make all 
+./MapAddr "${REPO_ROOT}/mdcache.out" "${REPO_ROOT}/${DETECT_OUTPUT_FNAME}" "${REPO_ROOT}/fs_globals.txt"
+mv mapped_conflicts.out ${REPO_ROOT}
+cd ${REPO_ROOT}
+echo "Successfully ran MapAddr to get mapped_conflicts.out"
+echo 
+
+# TODO:ls
 # 	Build fix pass, and run fix pass on output from map addr
 # 	Get fix output, and evaluate it
-
-
-
-
-
