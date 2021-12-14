@@ -71,6 +71,9 @@ void InterferenceDetector::recordAccess(const std::string &rw,
            destAddrNum < access.first + access.second.accessSize)) {
         continue;
       }
+      if (!isWrite && !access.second.isWrite) {
+        continue; // don't mark as interference is both accesses are reads
+      }
       interferences.push_back({access.first, destAddrNum});
     }
   }
