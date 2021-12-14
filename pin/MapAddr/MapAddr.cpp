@@ -36,8 +36,13 @@ addr_to_named_access(uint64_t addr,
     it--;
   }
 
+  if (addr >= it->start_addr && addr < it->start_addr + it->size) { // TODO: Check overflow?
+    return {it->name, addr - it->start_addr, 1};
+  }
+  return {"", 0, 0};
+
   // TODO: we always assume access of size 1 byte
-  return {it->name, addr - it->start_addr, 1};
+  // return {it->name, addr - it->start_addr, 1};
 }
 
 int main(int argc, char **argv) {
@@ -83,6 +88,9 @@ int main(int argc, char **argv) {
         addr_to_named_access(realaddr1, global_vars);
     auto [addr2_name, addr2_offset, access_size2] =
         addr_to_named_access(realaddr2, global_vars);
+    if (addr1_name.empty() || addr2_name.empty()) {
+      continue;
+    }
     out << std::hex << addr1_name << " " << addr1_offset << " " << access_size1
         << " " << addr2_name << " " << addr2_offset << " " << access_size2
         << " " << priority << std::endl;
