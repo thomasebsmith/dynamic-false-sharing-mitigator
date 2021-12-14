@@ -248,7 +248,7 @@ VOID Instruction(INS ins, void *v) {
       if (single) {
         INS_InsertPredicatedCall(ins, IPOINT_BEFORE, (AFUNPTR)LoadSingle,
                                  IARG_MEMORYREAD_EA, IARG_UINT32, instId,
-                                 IARG_THREAD_ID IARG_END);
+                                 IARG_THREAD_ID, IARG_END);
       } else {
         INS_InsertPredicatedCall(ins, IPOINT_BEFORE, (AFUNPTR)LoadMulti,
                                  IARG_MEMORYREAD_EA, IARG_MEMORYREAD_SIZE,
