@@ -14,14 +14,44 @@ struct global_var {
   uint64_t start_addr;
   size_t size;
 };
+
+struct memory_access {
+  std::string name;
+  uint64_t accessOffset;
+  uint64_t accessSize;
+};
+
+struct conflicting_access {
+  memory_access var1;
+  memory_access var2;
+  uint64_t priority;
+};
+
+struct conflicting_addr {
+  uint64_t addr1;
+  uint64_t addr2;
+};
+
+template <> struct std::hash<conflicting_addr> {
+  std::size_t operator()(conflicting_addr const &ca) const noexcept {
+    std::size_t h1 = std::hash<uint64_t>{}(ca.addr1);
+    std::size_t h2 = std::hash<uint64_t>{}(ca.addr2);
+    return h1 ^ h2; // or use boost::hash_combine
+  }
+};
+
+bool operator==(const conflicting_addr &left, const conflicting_addr &right) {
+  return (left.addr1 == right.addr1 && left.addr2 == right.addr2) ||
+         (left.addr1 == right.addr2 && left.addr2 == right.addr1);
+}
+
 bool operator<(const global_var &left, const global_var &right) {
   return left.start_addr < right.start_addr;
 }
 
 // <name, accessOffsetInVar, accessSize>
-std::tuple<std::string, size_t, size_t>
-addr_to_named_access(uint64_t addr,
-                     const std::vector<global_var> &global_vars) {
+memory_access addr_to_named_access(uint64_t addr,
+                                   const std::vector<global_var> &global_vars) {
   auto search_val = global_var{"", addr, 0};
   auto it =
       std::lower_bound(global_vars.begin(), global_vars.end(), search_val);
@@ -36,7 +66,8 @@ addr_to_named_access(uint64_t addr,
     it--;
   }
 
-  if (addr >= it->start_addr && addr < it->start_addr + it->size) { // TODO: Check overflow?
+  if (addr >= it->start_addr &&
+      addr < it->start_addr + it->size) { // TODO: Check overflow?
     return {it->name, addr - it->start_addr, 1};
   }
   return {"", 0, 0};
@@ -46,6 +77,7 @@ addr_to_named_access(uint64_t addr,
 }
 
 int main(int argc, char **argv) {
+  unordered_map<conflicting_addr, conflicting_access> priority_cache;
   std::vector<global_var> global_vars;
   std::string outfile("mapped_conflicts.out");
   ofstream out(outfile);
@@ -79,20 +111,30 @@ int main(int argc, char **argv) {
   // priority = some value
   //   }
 
+  priority = 1;
   while (potential_conflicting_addrs >> addr1 >> addr2) {
-    priority = 1;
     auto realaddr1 = string_to_uint64(addr1, 16);
     auto realaddr2 = string_to_uint64(addr2, 16);
-
-    auto [addr1_name, addr1_offset, access_size1] =
-        addr_to_named_access(realaddr1, global_vars);
-    auto [addr2_name, addr2_offset, access_size2] =
-        addr_to_named_access(realaddr2, global_vars);
-    if (addr1_name.empty() || addr2_name.empty()) {
+    conflicting_addr addrs = {realaddr1, realaddr2};
+    conflicting_access ca;
+    ca.priority = priority;
+    ca.var1 = addr_to_named_access(realaddr1, global_vars);
+    ca.var2 = addr_to_named_access(realaddr2, global_vars);
+    if (ca.var1.name.empty() || ca.var2.name.empty()) {
       continue;
     }
-    out << std::hex << addr1_name << " " << addr1_offset << " " << access_size1
-        << " " << addr2_name << " " << addr2_offset << " " << access_size2
-        << " " << priority << std::endl;
+    if (priority_cache.count(addrs)) {
+      priority_cache[addrs].priority += 1;
+    } else {
+      priority_cache[addrs] = ca;
+    }
+  }
+
+  for (auto &ca : priority_cache) {
+    auto &ma1 = ca.second.var1;
+    auto &ma2 = ca.second.var2;
+    out << std::hex << ma1.name << " " << ma1.accessOffset << " "
+        << ma1.accessSize << " " << ma2.name << " " << ma2.accessOffset << " "
+        << ma2.accessSize << " " << ca.second.priority << std::endl;
   }
 }
