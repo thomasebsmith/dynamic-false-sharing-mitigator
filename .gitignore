@@ -11,3 +11,6 @@ src/*.out
 pin/detect/detect 
 pin/detect/*.out
 !pin/detect/pinatrace_sample.out
+*.out
+*.interferences
+!pin/detect/pinatrace_sample.out.cacheline64.interferences

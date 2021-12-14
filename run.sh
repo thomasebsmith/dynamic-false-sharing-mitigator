@@ -3,8 +3,8 @@ set -Eeuo pipefail
 
 REPO_ROOT=$(pwd)
 BENCHNAME=sharedStruct # Change if necessary
-BENCH=~/group21/bench/${BENCHNAME} # Change if necessary
-BENCH=~/group21/bench/${BENCHNAME} # Change if necessary
+BENCH=${REPO_ROOT}/bench/${BENCHNAME}
+BENCH=${REPO_ROOT}/bench/${BENCHNAME} 
 CACHELINESIZE=64 # Change if necessary
 
 # Set up Intel Pin pinatrace
@@ -34,10 +34,21 @@ cd ${REPO_ROOT}
 ${PATH_TO_PIN}/pin -t ${PINATRACE_DIR}/obj-intel64/pinatrace.so -- ${REPO_ROOT}/src/build/run/${BENCHNAME}_globals
 echo "Successfully ran pinatrace on the globals pass. Got pinatrace.out as well as fs_globals.txt."
 
+# Run detect on pinatrace.out to get a list of interferences
 cd pin/detect 
 make detect 
 ./detect ${REPO_ROOT}/pinatrace.out $CACHELINESIZE
 DETECT_OUTPUT_FNAME=pinatrace.out.cacheline${CACHELINESIZE}.interferences
 echo "Successfully ran detect to produce ${DETECT_OUTPUT_FNAME}"
+
+cd ${REPO_ROOT}
+# TODO: Set up mdcache, run mdcache.
+# 	Build mapaddr
+# 	Feed fs_globals.txt, interferences, and mdcache output to mapaddr
+# 	Build fix pass, and run fix pass on output from map addr
+# 	Get fix output, and evaluate it
+
+
+
 
 
