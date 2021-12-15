@@ -337,11 +337,24 @@ string CACHE_BASE::StatsLong(string prefix, CACHE_TYPE cache_type) const {
     for (UINT32 i = 0; i < ACCESS_TYPE_NUM; i++) {
       const ACCESS_TYPE accessType = ACCESS_TYPE(i);
 
-      std::string type(accessType == ACCESS_TYPE_LOAD ? "Load" : "Store");
+      std::string type;
+      switch (accessType) {
+      case ACCESS_TYPE_LOAD:
+        type = "Load";
+        break;
+      case ACCESS_TYPE_STORE:
+        type = "Store";
+        break;
+      case ACCESS_TYPE_INVALIDATE:
+        type = "Invalidate";
+        break;
+      default:
+        assert(false);
+      }
 
       out += prefix + ljstr(type + "-Hits:      ", headerWidth) +
              mydecstr(Hits(accessType), numberWidth) + "  " +
-             fltstr(100.0 * Hits(accessType) / Accesses(accessType), 2, 6) +
+             fltstr((100.0 * Hits(accessType)) / Accesses(accessType), 2, 6) +
              "%\n";
 
       out += prefix + ljstr(type + "-Misses:    ", headerWidth) +
@@ -349,16 +362,17 @@ string CACHE_BASE::StatsLong(string prefix, CACHE_TYPE cache_type) const {
              fltstr(100.0 * Misses(accessType) / Accesses(accessType), 2, 6) +
              "%\n";
 
-      out +=
-          prefix + ljstr(type + "-Tombstones:    ", headerWidth) +
-          mydecstr(Tombstones(accessType), numberWidth) + "  " +
-          fltstr(100.0 * Tombstones(accessType) / Accesses(accessType), 2, 6) +
-          "%\n";
-
-      out += prefix + ljstr(type + "-Accesses:  ", headerWidth) +
-             mydecstr(Accesses(accessType), numberWidth) + "  " +
-             fltstr(100.0 * Accesses(accessType) / Accesses(accessType), 2, 6) +
+      out += prefix + ljstr(type + "-Tombstones:    ", headerWidth) +
+             mydecstr(Tombstones(accessType), numberWidth) + "  " +
+             fltstr((100.0 * Tombstones(accessType)) / Accesses(accessType), 2,
+                    6) +
              "%\n";
+
+      out +=
+          prefix + ljstr(type + "-Accesses:  ", headerWidth) +
+          mydecstr(Accesses(accessType), numberWidth) + "  " +
+          fltstr((100.0 * Accesses(accessType)) / Accesses(accessType), 2, 6) +
+          "%\n";
 
       out += prefix + "\n";
     }
@@ -395,13 +409,13 @@ class CACHE : public CACHE_BASE {
 private:
   SET _sets[MAX_SETS];
   mutex _mu;
-  shared_mutex &_write_mu;
+  mutex &_write_mu;
   std::vector<CACHE *> _peers;
 
 public:
   // constructors/destructors
   CACHE(std::string name, UINT32 cacheSize, UINT32 lineSize,
-        UINT32 associativity, shared_mutex &write_mu)
+        UINT32 associativity, mutex &write_mu)
       : CACHE_BASE(name, cacheSize, lineSize, associativity),
         _write_mu(write_mu) {
     ASSERTX(NumSets() <= MAX_SETS);
@@ -436,8 +450,8 @@ public:
 template <class SET, UINT32 MAX_SETS, UINT32 STORE_ALLOCATION>
 bool CACHE<SET, MAX_SETS, STORE_ALLOCATION>::Access(ADDRINT addr, UINT32 size,
                                                     ACCESS_TYPE accessType) {
-  ptr_lock_guard<shared_mutex> write_lock(
-      accessType == ACCESS_TYPE_STORE ? &_write_mu : nullptr);
+  ptr_lock_guard<mutex> write_lock(accessType == ACCESS_TYPE_STORE ? &_write_mu
+                                                                   : nullptr);
   lock_guard lock(_mu);
   const ADDRINT highAddr = addr + size;
   ACCESS_RESULT allHit = CACHE_HIT;
@@ -483,8 +497,8 @@ bool CACHE<SET, MAX_SETS, STORE_ALLOCATION>::Access(ADDRINT addr, UINT32 size,
 template <class SET, UINT32 MAX_SETS, UINT32 STORE_ALLOCATION>
 bool CACHE<SET, MAX_SETS, STORE_ALLOCATION>::AccessSingleLine(
     ADDRINT addr, ACCESS_TYPE accessType) {
-  ptr_lock_guard<shared_mutex> write_lock(
-      accessType == ACCESS_TYPE_STORE ? &_write_mu : nullptr);
+  ptr_lock_guard<mutex> write_lock(accessType == ACCESS_TYPE_STORE ? &_write_mu
+                                                                   : nullptr);
   lock_guard lock(_mu);
   CACHE_TAG tag;
   UINT32 setIndex;

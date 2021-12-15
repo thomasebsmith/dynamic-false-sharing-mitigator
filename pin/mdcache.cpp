@@ -60,6 +60,14 @@ INT32 Usage() {
   return -1;
 }
 
+// variadic template
+template <typename T> std::string sstr(T t) {
+  std::ostringstream sstr;
+  // fold expression
+  sstr << std::dec << t;
+  return sstr.str();
+}
+
 /* ===================================================================== */
 /* Global Variables */
 /* ===================================================================== */
@@ -74,13 +82,14 @@ typedef CACHE_ROUND_ROBIN(max_sets, max_associativity, allocation) CACHE;
 } // namespace DL1
 
 std::map<UINT32, DL1::CACHE *> caches;
-shared_mutex write_mu;
+shared_mutex cachelist_mu;
+mutex invalidation_mutex;
 
-// You must have unique access to write_mu
+// You must have unique access to cachelist_mu
 void insert_cache_for(UINT32 thread) {
-  DL1::CACHE *cache =
-      new DL1::CACHE("L1 Data Cache", KnobCacheSize.Value() * KILO,
-                     KnobLineSize.Value(), KnobAssociativity.Value(), write_mu);
+  DL1::CACHE *cache = new DL1::CACHE(
+      "L1 Data Cache for Core " + sstr(thread), KnobCacheSize.Value() * KILO,
+      KnobLineSize.Value(), KnobAssociativity.Value(), invalidation_mutex);
   std::map<UINT32, DL1::CACHE *>::iterator it;
   for (it = caches.begin(); it != caches.end(); it++) {
     it->second->RegisterPeer(cache);
@@ -89,19 +98,19 @@ void insert_cache_for(UINT32 thread) {
   caches[thread] = cache;
 }
 
-// You may not have possession of write_mu
+// You may not have possession of cachelist_mu
 void ensure_cache_exists(UINT32 thread) {
-  write_mu.lock_shared();
+  cachelist_mu.lock_shared();
   if (!caches.count(thread)) {
-    write_mu.unlock();
+    cachelist_mu.unlock();
     {
-      unique_lock unique(write_mu);
+      unique_lock unique(cachelist_mu);
       if (!caches.count(thread))
         insert_cache_for(thread);
     }
-    write_mu.lock_shared();
+    cachelist_mu.lock_shared();
   }
-  write_mu.unlock_shared();
+  cachelist_mu.unlock_shared();
 }
 
 typedef enum { COUNTER_MISS = 0, COUNTER_HIT = 1, COUNTER_NUM } COUNTER;
@@ -117,8 +126,11 @@ COMPRESSOR_COUNTER<ADDRINT, UINT32, COUNTER_HIT_MISS> profile;
 VOID LoadMulti(ADDRINT addr, UINT32 size, UINT32 instId, UINT32 threadID) {
   // first level D-cache
   ensure_cache_exists(threadID);
-  shared_lock lock(write_mu);
-  DL1::CACHE *cache = caches.find(threadID)->second;
+  DL1::CACHE *cache;
+  {
+    shared_lock lock(cachelist_mu);
+    cache = caches.find(threadID)->second;
+  }
 
   const BOOL cacheHit = cache->Access(addr, size, CACHE_BASE::ACCESS_TYPE_LOAD);
 
@@ -131,8 +143,11 @@ VOID LoadMulti(ADDRINT addr, UINT32 size, UINT32 instId, UINT32 threadID) {
 VOID StoreMulti(ADDRINT addr, UINT32 size, UINT32 instId, UINT32 threadID) {
   // first level D-cache
   ensure_cache_exists(threadID);
-  unique_lock lock(write_mu);
-  DL1::CACHE *cache = caches.find(threadID)->second;
+  DL1::CACHE *cache;
+  {
+    shared_lock lock(cachelist_mu);
+    cache = caches.find(threadID)->second;
+  }
 
   const BOOL cacheHit =
       cache->Access(addr, size, CACHE_BASE::ACCESS_TYPE_STORE);
@@ -147,8 +162,11 @@ VOID LoadSingle(ADDRINT addr, UINT32 instId, UINT32 threadID) {
   // @todo we may access several cache lines for
   // first level D-cache
   ensure_cache_exists(threadID);
-  shared_lock lock(write_mu);
-  DL1::CACHE *cache = caches.find(threadID)->second;
+  DL1::CACHE *cache;
+  {
+    shared_lock lock(cachelist_mu);
+    cache = caches.find(threadID)->second;
+  }
 
   const BOOL cacheHit =
       cache->AccessSingleLine(addr, CACHE_BASE::ACCESS_TYPE_LOAD);
@@ -162,8 +180,11 @@ VOID StoreSingle(ADDRINT addr, UINT32 instId, UINT32 threadID) {
   // @todo we may access several cache lines for
   // first level D-cache
   ensure_cache_exists(threadID);
-  unique_lock lock(write_mu);
-  DL1::CACHE *cache = caches.find(threadID)->second;
+  DL1::CACHE *cache;
+  {
+    shared_lock lock(cachelist_mu);
+    cache = caches.find(threadID)->second;
+  }
 
   const BOOL cacheHit =
       cache->AccessSingleLine(addr, CACHE_BASE::ACCESS_TYPE_STORE);
@@ -176,8 +197,11 @@ VOID StoreSingle(ADDRINT addr, UINT32 instId, UINT32 threadID) {
 
 VOID LoadMultiFast(ADDRINT addr, UINT32 size, UINT32 threadID) {
   ensure_cache_exists(threadID);
-  unique_lock lock(write_mu);
-  DL1::CACHE *cache = caches.find(threadID)->second;
+  DL1::CACHE *cache;
+  {
+    shared_lock lock(cachelist_mu);
+    cache = caches.find(threadID)->second;
+  }
 
   cache->Access(addr, size, CACHE_BASE::ACCESS_TYPE_LOAD);
 }
@@ -186,8 +210,11 @@ VOID LoadMultiFast(ADDRINT addr, UINT32 size, UINT32 threadID) {
 
 VOID StoreMultiFast(ADDRINT addr, UINT32 size, UINT32 threadID) {
   ensure_cache_exists(threadID);
-  unique_lock lock(write_mu);
-  DL1::CACHE *cache = caches.find(threadID)->second;
+  DL1::CACHE *cache;
+  {
+    shared_lock lock(cachelist_mu);
+    cache = caches.find(threadID)->second;
+  }
 
   cache->Access(addr, size, CACHE_BASE::ACCESS_TYPE_STORE);
 }
@@ -196,8 +223,11 @@ VOID StoreMultiFast(ADDRINT addr, UINT32 size, UINT32 threadID) {
 
 VOID LoadSingleFast(ADDRINT addr, UINT32 threadID) {
   ensure_cache_exists(threadID);
-  unique_lock lock(write_mu);
-  DL1::CACHE *cache = caches.find(threadID)->second;
+  DL1::CACHE *cache;
+  {
+    shared_lock lock(cachelist_mu);
+    cache = caches.find(threadID)->second;
+  }
 
   cache->AccessSingleLine(addr, CACHE_BASE::ACCESS_TYPE_LOAD);
 }
@@ -206,8 +236,12 @@ VOID LoadSingleFast(ADDRINT addr, UINT32 threadID) {
 
 VOID StoreSingleFast(ADDRINT addr, UINT32 threadID) {
   ensure_cache_exists(threadID);
-  unique_lock lock(write_mu);
-  DL1::CACHE *cache = caches.find(threadID)->second;
+    DL1::CACHE *cache;
+  {
+    shared_lock lock(cachelist_mu);
+    cache = caches.find(threadID)->second;
+  }
+
 
   cache->AccessSingleLine(addr, CACHE_BASE::ACCESS_TYPE_STORE);
 }
