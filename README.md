@@ -7,6 +7,9 @@
 - `bench` - Benchmark programs that exhibit false sharing
 - `src`   - Source code for the compiler passes
   - `profile` - First (analysis) pass
+  - `globals` - Custom pass to output the names, locations,
+                and sizes of all global variables at the
+                beginning of program execution.
   - `fix`     - Second pass to fix false sharing
 
 ## Setup
