@@ -23,6 +23,22 @@ using std::ostringstream;
 using std::string;
 
 std::ofstream outFile;
+std::ofstream interferenceFile;
+
+template <typename T> std::string sstr(T t) {
+  std::ostringstream sstr;
+  // fold expression
+  sstr << std::dec << t;
+  return sstr.str();
+}
+
+bool replace(std::string &str, const std::string &from, const std::string &to) {
+  size_t start_pos = str.find(from);
+  if (start_pos == std::string::npos)
+    return false;
+  str.replace(start_pos, from.length(), to);
+  return true;
+}
 
 /* ===================================================================== */
 /* Commandline Switches */
@@ -47,6 +63,10 @@ KNOB<UINT32> KnobLineSize(KNOB_MODE_WRITEONCE, "pintool", "b", "32",
                           "cache block size in bytes");
 KNOB<UINT32> KnobAssociativity(KNOB_MODE_WRITEONCE, "pintool", "a", "4",
                                "cache associativity (1 for direct mapped)");
+KNOB<string> KnobInterferenceOutputFile(
+    KNOB_MODE_WRITEONCE, "pintool", "i",
+    std::string("mdcache.out.cacheline") + "XX" + ".interferences",
+    "specify mdcache interference file name");
 
 /* ===================================================================== */
 /* Print Help Message                                                    */
@@ -58,14 +78,6 @@ INT32 Usage() {
 
   cerr << KNOB_BASE::StringKnobSummary() << endl;
   return -1;
-}
-
-// variadic template
-template <typename T> std::string sstr(T t) {
-  std::ostringstream sstr;
-  // fold expression
-  sstr << std::dec << t;
-  return sstr.str();
 }
 
 /* ===================================================================== */
@@ -343,10 +355,21 @@ VOID Instruction(INS ins, void *v) {
                "# DCACHE stats\n"
                "#\n";
 
+    std::map<Interference, unsigned> counts;
+
     std::map<UINT32, DL1::CACHE *>::iterator it;
     for (it = caches.begin(); it != caches.end(); it++) {
       DL1::CACHE *cache = it->second;
       outFile << cache->StatsLong("# ", CACHE_BASE::CACHE_TYPE_DCACHE);
+      AddAllMappings(cache->InterferenceCounts(), counts);
+    }
+
+    std::map<Interference, unsigned>::iterator cit;
+    interferenceFile << "Number of interferences: " << counts.size()
+                     << std::endl;
+    for (cit = counts.begin(); cit != counts.end(); cit++) {
+      interferenceFile << std::hex << cit->first.first << "\t"
+                       << cit->first.second << "\t" << cit->second << std::endl;
     }
 
     if (KnobTrackLoads || KnobTrackStores) {
@@ -357,6 +380,7 @@ VOID Instruction(INS ins, void *v) {
       outFile << profile.StringLong();
     }
     outFile.close();
+    interferenceFile.close();
   }
 
 /* ===================================================================== */
@@ -371,6 +395,10 @@ VOID Instruction(INS ins, void *v) {
       }
 
       outFile.open(KnobOutputFile.Value().c_str());
+      // Replace XX with the cachelinesize
+      std::string interferenceFilename = KnobInterferenceOutputFile.Value();
+      replace(interferenceFilename, "XX", sstr(KnobLineSize.Value()));
+      interferenceFile.open(interferenceFilename.c_str());
 
       profile.SetKeyName("iaddr          ");
       profile.SetCounterName("dcache:miss        dcache:hit");

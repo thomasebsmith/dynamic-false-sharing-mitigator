@@ -20,6 +20,7 @@ typedef UINT64 CACHE_STATS; // type of cache hit/miss counters
 #include "pin.H"
 #include <algorithm>
 #include <sstream>
+#include <utility>
 #include <vector>
 using std::ostringstream;
 using std::string;
@@ -33,6 +34,16 @@ static string mydecstr(UINT64 v, UINT32 w) {
   o << v;
   string str(o.str());
   return str;
+}
+
+typedef std::pair<ADDRINT, ADDRINT> Interference;
+
+void AddAllMappings(const std::map<Interference, unsigned> &src,
+                    std::map<Interference, unsigned> &dst) {
+  std::map<Interference, unsigned>::const_iterator it;
+  for (it = src.begin(); it != src.end(); it++) {
+    dst[it->first] += it->second;
+  }
 }
 
 typedef enum {
@@ -94,17 +105,21 @@ static inline INT32 CeilLog2(UINT32 n) { return FloorLog2(n - 1) + 1; }
 class CACHE_TAG {
 private:
   ADDRINT _tag;
-  bool _is_tombstone;
+  INT64 _tombstone_addr;
 
 public:
   CACHE_TAG(ADDRINT tag = 0) {
     _tag = tag;
-    _is_tombstone = false;
+    _tombstone_addr = -1;
   }
   bool operator==(const CACHE_TAG &right) const { return _tag == right._tag; }
   operator ADDRINT() const { return _tag; }
-  void kill() { _is_tombstone = true; }
-  bool is_dead() { return _is_tombstone; }
+  void kill(ADDRINT addr) { _tombstone_addr = addr; }
+  bool is_dead() const { return _tombstone_addr >= 0; }
+  bool matches(const CACHE_TAG &other) const {
+    return other._tombstone_addr == _tombstone_addr;
+  }
+  ADDRINT tombstoneAddr() const { return _tombstone_addr; }
 };
 
 /*!
@@ -128,7 +143,7 @@ public:
     return _tag == tag ? CACHE_HIT : CACHE_MISS;
   }
   VOID Replace(CACHE_TAG tag) { _tag = tag; }
-  VOID Invalidate(CACHE_TAG tag) {}
+  VOID Invalidate(ADDRINT addr) {}
 };
 
 /*!
@@ -140,6 +155,7 @@ private:
   UINT32 _tagsLastIndex;
   UINT32 _nextReplaceIndex;
   UINT32 _nextTombstoneIndex;
+  std::map<Interference, unsigned> _interferenceCounts;
 
 public:
   ROUND_ROBIN(UINT32 associativity = MAX_ASSOCIATIVITY)
@@ -160,8 +176,11 @@ public:
     _nextTombstoneIndex = _tagsLastIndex;
   }
   UINT32 GetAssociativity(UINT32 associativity) { return _tagsLastIndex + 1; }
+  const std::map<Interference, unsigned> &GetInterferenceCounts() const {
+    return _interferenceCounts;
+  };
 
-  ACCESS_RESULT Find(CACHE_TAG tag) {
+  ACCESS_RESULT Find(CACHE_TAG tag, ADDRINT addr) {
     ACCESS_RESULT result = CACHE_MISS;
 
     for (INT32 index = _tagsLastIndex; index >= 0; index--) {
@@ -169,11 +188,20 @@ public:
       // tighter assembly loop for ARM that way ...
       if (_tags[index] == tag) {
         if (_tags[index].is_dead())
-          // If we find a tombstone, it could still be in there.
-          result = CACHE_TOMBSTONE;
-        else
+          if (_tags[index].matches(addr)) {
+            result = CACHE_MISS;
+          } else {
+            // If we find a tombstone, it could still be in there, so don't
+            // break.
+            result = CACHE_TOMBSTONE;
+            ADDRINT lower = std::min(tag.tombstoneAddr(), addr);
+            ADDRINT upper = std::max(tag.tombstoneAddr(), addr);
+            _interferenceCounts[std::make_pair(lower, upper)]++;
+          }
+        else {
           result = CACHE_HIT;
-        goto end;
+          goto end;
+        }
       }
     }
 
@@ -192,11 +220,11 @@ public:
     _nextReplaceIndex = (index == 0 ? _tagsLastIndex : index - 1);
   }
 
-  VOID Invalidate(CACHE_TAG tag) {
+  VOID Invalidate(ADDRINT addr) {
     for (INT32 index = _tagsLastIndex; index >= 0; index--) {
       // If we find it and it's alive, kill it
-      if (_tags[index] == tag && !_tags[index].is_dead()) {
-        _tags[index].kill();
+      if (_tags[index] == (CACHE_TAG)addr && !_tags[index].is_dead()) {
+        _tags[index].kill(addr);
         // Put it on the remove list
         std::swap(_tags[index], _tags[_nextTombstoneIndex]);
         // Increment the remove list
@@ -302,7 +330,6 @@ public:
     lineIndex = addr & lineMask;
     SplitAddress(addr, tag, setIndex);
   }
-
   string StatsLong(string prefix = "", CACHE_TYPE = CACHE_TYPE_DCACHE) const;
 };
 
@@ -412,6 +439,11 @@ private:
   mutex &_write_mu;
   std::vector<CACHE *> _peers;
 
+  /// Cache invalidation from addr to addr+size-1
+  void Invalidate(ADDRINT addr, UINT32 size);
+  /// Cache invalidation at addr that does not span cache lines
+  void InvalidateSingleLine(ADDRINT addr);
+
 public:
   // constructors/destructors
   CACHE(std::string name, UINT32 cacheSize, UINT32 lineSize,
@@ -437,10 +469,16 @@ public:
   // Become aware of the cache for one other CPU
   void RegisterPeer(CACHE *peer);
 
-  /// Cache invalidation from addr to addr+size-1
-  void Invalidate(ADDRINT addr, UINT32 size);
-  /// Cache invalidation at addr that does not span cache lines
-  void InvalidateSingleLine(ADDRINT addr);
+  std::map<Interference, unsigned> InterferenceCounts() const {
+    std::map<Interference, unsigned> counts;
+    for (size_t i = 0; i < MAX_SETS; i++) {
+      const SET &set = _sets[i];
+      const std::map<Interference, unsigned> &interferences =
+          set.GetInterferenceCounts();
+      AddAllMappings(interferences, counts);
+    }
+    return counts;
+  }
 };
 
 /*!
@@ -466,9 +504,8 @@ bool CACHE<SET, MAX_SETS, STORE_ALLOCATION>::Access(ADDRINT addr, UINT32 size,
 
     SET &set = _sets[setIndex];
 
-    ACCESS_RESULT localHit = set.Find(tag);
+    ACCESS_RESULT localHit = set.Find(tag, addr);
     allHit = static_cast<ACCESS_RESULT>(allHit & localHit);
-
     // on miss and tombstone, loads always allocate, stores optionally
     if ((localHit != CACHE_HIT) &&
         (accessType == ACCESS_TYPE_LOAD ||
@@ -507,7 +544,7 @@ bool CACHE<SET, MAX_SETS, STORE_ALLOCATION>::AccessSingleLine(
 
   SET &set = _sets[setIndex];
 
-  ACCESS_RESULT hit = set.Find(tag);
+  ACCESS_RESULT hit = set.Find(tag, addr);
 
   // on miss, loads always allocate, stores optionally
   if ((hit != CACHE_HIT) && (accessType == ACCESS_TYPE_LOAD ||
@@ -569,7 +606,7 @@ void CACHE<SET, MAX_SETS, STORE_ALLOCATION>::Invalidate(ADDRINT addr,
 
     SET &set = _sets[setIndex];
 
-    ACCESS_RESULT localHit = set.Find(tag);
+    ACCESS_RESULT localHit = set.Find(tag, addr);
     allHit = static_cast<ACCESS_RESULT>(allHit & localHit);
 
     // If it's in the cache, remove it
@@ -596,7 +633,7 @@ void CACHE<SET, MAX_SETS, STORE_ALLOCATION>::InvalidateSingleLine(
   UINT32 setIndex;
   SplitAddress(addr, tag, setIndex);
   SET &set = _sets[setIndex];
-  ACCESS_RESULT hit = set.Find(tag);
+  ACCESS_RESULT hit = set.Find(tag, addr);
   // If it's in the cache, invalidate it
   if (hit == CACHE_HIT) {
     set.Invalidate(tag);
