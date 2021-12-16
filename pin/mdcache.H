@@ -270,6 +270,7 @@ public:
     case CACHE_HIT:
       return 2;
     }
+    assert(false);
   }
 
 protected:
