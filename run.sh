@@ -18,12 +18,14 @@ if [ ! -f ${PINATRACE_DIR}/pinatrace.cpp ]; then
     exit 1
 fi
 
+# Copy over modified pinatrace, and build pinatrace
 cp pin/pinatrace.cpp ${PINATRACE_DIR}
 cd ${PINATRACE_DIR}
 make obj-intel64/pinatrace.so
 echo "Successfully compiled pinatrace.so"
 echo
 
+# Copy over modified mdcache, and build mdcache 
 cd ${REPO_ROOT}
 cp pin/mdcache.cpp ${PINATRACE_DIR}
 cp pin/mdcache.H ${PINATRACE_DIR}
@@ -73,11 +75,13 @@ cd ${REPO_ROOT}
 echo "Successfully ran MapAddr to get mapped_conflicts.out"
 echo 
 
+# Apply the fix LLVM pass
 echo "Applying fix and running optimized binary"
 ./src/run.sh ${BENCH} fix
 echo "Successfully applied fix"
 echo
 
+# Evaluate the fixed binary with mdcache
 mv mdcache.out pre_mdcache.out
 mv $MDCACHE_OUTPUT_FNAME "pre_${MDCACHE_OUTPUT_FNAME}"
 ${PATH_TO_PIN}/pin -t ${PINATRACE_DIR}/obj-intel64/mdcache.so -- ${REPO_ROOT}/src/build/run/${BENCHNAME}_fix
