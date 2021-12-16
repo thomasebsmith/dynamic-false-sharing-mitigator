@@ -37,6 +37,8 @@ echo
 
 # Clean up old files
 rm -f *.out *.interferences fs_globals.txt
+echo "Cleaned up old output files"
+echo
 
 # Run the globals pass
 cd ${REPO_ROOT}
