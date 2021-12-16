@@ -2,7 +2,7 @@ build/
 *.bc
 fs_profile.txt
 fs_globals.txt
-fs_conflicts.txt
+mapped_conflicts.txt
 bench/sharedArray
 bench/sharedStruct
 bench/basicGlobals
@@ -16,3 +16,4 @@ pin/detect/*.out
 *.out
 *.interferences
 !pin/detect/pinatrace_sample.out.cacheline64.interferences
+*.swp
