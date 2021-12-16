@@ -2,7 +2,7 @@
 set -Eeuo pipefail 
 
 REPO_ROOT=$(pwd)
-BENCHNAME=locks # Change if necessary
+BENCHNAME=basicGlobals # Change if necessary
 BENCH=${REPO_ROOT}/bench/${BENCHNAME}
 BENCH=${REPO_ROOT}/bench/${BENCHNAME} 
 CACHELINESIZE=64 # Change if necessary
@@ -37,7 +37,7 @@ echo
 
 # Clean up old files
 cd ${REPO_ROOT}
-rm -f *.out *.interferences fs_globals.txt
+rm -f *.out *.interferences fs_globals.txt ${REPO_ROOT}/src/mapped_conflicts.out
 echo "Cleaned up old output files"
 echo
 
@@ -77,6 +77,7 @@ make clean
 make all 
 ./MapAddr "${REPO_ROOT}/${MDCACHE_OUTPUT_FNAME}" "${REPO_ROOT}/${DETECT_OUTPUT_FNAME}" "${REPO_ROOT}/fs_globals.txt"
 mv mapped_conflicts.out ${REPO_ROOT}
+cp ${REPO_ROOT}/mapped_conflicts.out ${REPO_ROOT}/src # So that manual runs of src/run.sh with fix will work
 cd ${REPO_ROOT}
 echo "Successfully ran MapAddr to get mapped_conflicts.out"
 echo 
