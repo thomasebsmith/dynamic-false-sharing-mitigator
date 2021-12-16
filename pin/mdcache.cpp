@@ -365,8 +365,8 @@ VOID Instruction(INS ins, void *v) {
     }
 
     std::map<Interference, unsigned>::iterator cit;
-    interferenceFile << "Number of interferences: " << counts.size()
-                     << std::endl;
+    // interferenceFile << "Number of interferences: " << counts.size()
+    //                  << std::endl;
     for (cit = counts.begin(); cit != counts.end(); cit++) {
       interferenceFile << std::hex << cit->first.first << "\t"
                        << cit->first.second << "\t" << std::dec << cit->second
