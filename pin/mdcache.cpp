@@ -369,7 +369,8 @@ VOID Instruction(INS ins, void *v) {
                      << std::endl;
     for (cit = counts.begin(); cit != counts.end(); cit++) {
       interferenceFile << std::hex << cit->first.first << "\t"
-                       << cit->first.second << "\t" << cit->second << std::endl;
+                       << cit->first.second << "\t" << std::dec << cit->second
+                       << std::endl;
     }
 
     if (KnobTrackLoads || KnobTrackStores) {

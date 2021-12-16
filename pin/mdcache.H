@@ -116,9 +116,7 @@ public:
   operator ADDRINT() const { return _tag; }
   void kill(ADDRINT addr) { _tombstone_addr = addr; }
   bool is_dead() const { return _tombstone_addr >= 0; }
-  bool matches(const CACHE_TAG &other) const {
-    return other._tombstone_addr == _tombstone_addr;
-  }
+  bool matches(ADDRINT addr) const { return addr == _tombstone_addr; }
   ADDRINT tombstoneAddr() const { return _tombstone_addr; }
 };
 
@@ -143,7 +141,7 @@ public:
     return _tag == tag ? CACHE_HIT : CACHE_MISS;
   }
   VOID Replace(CACHE_TAG tag) { _tag = tag; }
-  VOID Invalidate(ADDRINT addr) {}
+  VOID Invalidate(CACHE_TAG tag, ADDRINT addr) {}
 };
 
 /*!
@@ -194,8 +192,11 @@ public:
             // If we find a tombstone, it could still be in there, so don't
             // break.
             result = CACHE_TOMBSTONE;
-            ADDRINT lower = std::min(tag.tombstoneAddr(), addr);
-            ADDRINT upper = std::max(tag.tombstoneAddr(), addr);
+            std::cerr << "interference between " << (void *)addr << " and "
+                      << (void *)_tags[index].tombstoneAddr() << "\n";
+            ADDRINT lower = std::min(_tags[index].tombstoneAddr(), addr);
+            ADDRINT upper = std::max(_tags[index].tombstoneAddr(), addr);
+            // std::cerr << "\tdistance of " << upper - lower << " bytes\n";
             _interferenceCounts[std::make_pair(lower, upper)]++;
           }
         else {
@@ -220,10 +221,10 @@ public:
     _nextReplaceIndex = (index == 0 ? _tagsLastIndex : index - 1);
   }
 
-  VOID Invalidate(ADDRINT addr) {
+  VOID Invalidate(CACHE_TAG tag, ADDRINT addr) {
     for (INT32 index = _tagsLastIndex; index >= 0; index--) {
       // If we find it and it's alive, kill it
-      if (_tags[index] == (CACHE_TAG)addr && !_tags[index].is_dead()) {
+      if (_tags[index] == tag && !_tags[index].is_dead()) {
         _tags[index].kill(addr);
         // Put it on the remove list
         std::swap(_tags[index], _tags[_nextTombstoneIndex]);
@@ -611,7 +612,7 @@ void CACHE<SET, MAX_SETS, STORE_ALLOCATION>::Invalidate(ADDRINT addr,
 
     // If it's in the cache, remove it
     if (localHit == CACHE_HIT) {
-      set.Invalidate(tag);
+      set.Invalidate(tag, addr);
     }
 
     addr = (addr & notLineMask) + lineSize; // start of next cache line
@@ -636,7 +637,7 @@ void CACHE<SET, MAX_SETS, STORE_ALLOCATION>::InvalidateSingleLine(
   ACCESS_RESULT hit = set.Find(tag, addr);
   // If it's in the cache, invalidate it
   if (hit == CACHE_HIT) {
-    set.Invalidate(tag);
+    set.Invalidate(tag, addr);
   }
 
   _access[ACCESS_TYPE_INVALIDATE][CALC_RESULT_INDEX(hit)]++;
