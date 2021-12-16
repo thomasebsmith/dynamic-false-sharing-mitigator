@@ -1,6 +1,7 @@
 #include "InterferenceDetector.h"
 
 #include <iostream>
+#include <cassert>
 
 constexpr int HEX_BASE = 16;
 
@@ -74,6 +75,7 @@ void InterferenceDetector::recordAccess(const std::string &rw,
       if (!isWrite && !access.second.isWrite) {
         continue; // don't mark as interference is both accesses are reads
       }
+      // assert(access.first != destAddrNum);
       conflicting_addr interference{access.first, destAddrNum};
       interferences[interference]++;
     }
@@ -84,7 +86,7 @@ void InterferenceDetector::outputInterferences(std::ostream &out) {
   std::cout << "Number of interferences: " << interferences.size() << std::endl;
   for (const auto &interference : interferences) {
     out << std::hex << interference.first.addr1 
-        << "\t" << interference.first.addr1 
+        << "\t" << interference.first.addr2 
         << "\t" << std::dec << interference.second << std::endl;
   }
 }
