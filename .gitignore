@@ -17,3 +17,4 @@ pin/detect/*.out
 *.interferences
 !pin/detect/pinatrace_sample.out.cacheline64.interferences
 *.swp
+.DS_Store
