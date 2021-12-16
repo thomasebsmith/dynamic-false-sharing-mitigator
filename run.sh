@@ -2,7 +2,7 @@
 set -Eeuo pipefail 
 
 REPO_ROOT=$(pwd)
-BENCHNAME=sharedStruct # Change if necessary
+BENCHNAME=locks # Change if necessary
 BENCH=${REPO_ROOT}/bench/${BENCHNAME}
 BENCH=${REPO_ROOT}/bench/${BENCHNAME} 
 CACHELINESIZE=64 # Change if necessary
@@ -47,13 +47,6 @@ ${PATH_TO_PIN}/pin -t ${PINATRACE_DIR}/obj-intel64/pinatrace.so -- ${REPO_ROOT}/
 echo "Successfully ran pinatrace on the globals pass. Got pinatrace.out as well as fs_globals.txt."
 echo
 
-# Run pinatrace on the global pass 
-cd ${REPO_ROOT}
-${PATH_TO_PIN}/pin -t ${PINATRACE_DIR}/obj-intel64/mdcache.so -- ${REPO_ROOT}/src/build/run/${BENCHNAME}_globals
-MDCACHE_OUTPUT_FNAME=mdcache.out.cacheline64.interferences
-echo "Successfully ran mdcache on the globals pass. Got mdcache.out as well as "
-echo
-
 # Run detect on pinatrace.out to get a list of interferences
 cd pin/detect 
 make clean
@@ -63,9 +56,12 @@ DETECT_OUTPUT_FNAME=pinatrace.out.cacheline${CACHELINESIZE}.interferences
 echo "Successfully ran detect to produce ${DETECT_OUTPUT_FNAME}"
 echo
 
-# TODO: Compile mdcache and run it to get mdcache.out
+# Run mdcache on the global pass 
 cd ${REPO_ROOT}
-touch mdcache.out 
+${PATH_TO_PIN}/pin -t ${PINATRACE_DIR}/obj-intel64/mdcache.so -- ${REPO_ROOT}/src/build/run/${BENCHNAME}_globals
+MDCACHE_OUTPUT_FNAME=mdcache.out.cacheline64.interferences
+echo "Successfully ran mdcache on the globals pass. Got mdcache.out as well as ${MDCACHE_OUTPUT_FNAME}"
+echo
 
 # Run MapAddr to get mapped_conflicts.out
 cd pin/MapAddr 
@@ -77,8 +73,17 @@ cd ${REPO_ROOT}
 echo "Successfully ran MapAddr to get mapped_conflicts.out"
 echo 
 
-# TODO:ls
-# 	Build fix pass, and run fix pass on output from map addr
-# 	Get fix output, and evaluate it
-echo "APPLYING FIX"
+echo "Applying fix and running optimized binary"
 ./src/run.sh ${BENCH} fix
+echo "Successfully applied fix"
+echo
+
+mv mdcache.out pre_mdcache.out
+mv $MDCACHE_OUTPUT_FNAME "pre_${MDCACHE_OUTPUT_FNAME}"
+${PATH_TO_PIN}/pin -t ${PINATRACE_DIR}/obj-intel64/mdcache.so -- ${REPO_ROOT}/src/build/run/${BENCHNAME}_fix
+mv mdcache.out post_mdcache.out
+mv $MDCACHE_OUTPUT_FNAME "post_${MDCACHE_OUTPUT_FNAME}"
+echo "Evaluated fixed binary with mdcache, and renamed old mdcache files."
+echo "See pre_mdcache.out, pre_${MDCACHE_OUTPUT_FNAME}, post_mdcache.out, post_${MDCACHE_OUTPUT_FNAME}"
+echo
+
