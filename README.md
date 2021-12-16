@@ -21,3 +21,9 @@ wget https://software.intel.com/sites/landingpage/pintool/downloads/pin-3.21-984
 ```
 3. Look at `run.sh` script. 
   - Set `PATH_TO_PIN`, `BENCHNAME`, `CACHELINESIZE`, etc., correctly.
+
+Mega-command to do all of the above steps:
+```
+cd ~ && mkdir intel-pin && cd intel-pin && wget https://software.intel.com/sites/landingpage/pintool/downloads/pin-3.21-98484-ge7cd811fd-gcc-linux.tar.gz && tar -xvzf pin-3.21-98484-ge7cd811fd-gcc-linux.tar.gz && cd ~ && git clone git@github.com:thomasebsmith/eecs583-f21-group21.git && cd eecs583-f21-group21
+```
+
