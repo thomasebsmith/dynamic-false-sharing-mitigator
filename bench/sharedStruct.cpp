@@ -18,7 +18,7 @@ struct SharedStruct {
 FalseSharedStruct false_shared_data;
 SharedStruct shared_data;
 
-const int NUM_LOOPS = 10;
+const int NUM_LOOPS = 1000000;
 const int NUM_RUNS = 1;
 
 double compute(struct timespec start, struct timespec end) {
@@ -36,6 +36,7 @@ void runThread(volatile int *threadData) {
 
 int main() {
   timespec tpBegin1, tpEnd1, tpBegin2, tpEnd2;
+
   clock_gettime(CLOCK_REALTIME, &tpBegin1);
   for (int i = 0; i < NUM_RUNS; i++) {
     std::thread thread1{runThread, &false_shared_data.thread1Data};
@@ -44,7 +45,7 @@ int main() {
     thread2.join();
   }
   clock_gettime(CLOCK_REALTIME, &tpEnd1);
-
+  
   clock_gettime(CLOCK_REALTIME, &tpBegin2);
   for (int i = 0; i < NUM_RUNS; i++) {
     std::thread thread1{runThread, &shared_data.thread1Data};

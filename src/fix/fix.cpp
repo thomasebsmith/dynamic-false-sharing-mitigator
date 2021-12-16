@@ -50,7 +50,7 @@ std::istream &operator>>(std::istream &in, Conflict &conflict) {
 
 namespace {
 struct PaddedStruct {
-  Type *type;
+  StructType *type;
   std::unordered_map<unsigned int, unsigned int> newElementByOldElement;
 
   PaddedStruct(
@@ -70,17 +70,23 @@ struct PaddedStruct {
         size_t paddingBytes = (alignSoFar / cacheLineSize + 1) * cacheLineSize - alignSoFar;
         newTypes.push_back(ArrayType::get(int8Ty, paddingBytes));
         alignSoFar += paddingBytes;
+        paddingBytesSoFar += paddingBytes;
         assert(alignSoFar % cacheLineSize == 0);
       }
       newTypes.push_back(oldType->getElementType(i));
       newElementByOldElement.emplace(i, static_cast<unsigned int>(newTypes.size() - 1));
     }
-    type = StructType::create(newTypes);
+
+    if (oldType->hasName()) {
+      type = StructType::create(newTypes, oldType->getName());
+    } else {
+      type = StructType::create(newTypes);
+    }
   }
 };
 }
 
-static bool fixGlobalStruct(GlobalVariable *globalVar, PaddedStruct &padded) {
+static bool fixGlobalStruct(Module &M, GlobalVariable *globalVar, PaddedStruct &padded) {
   for (auto *user : globalVar->users()) {
     if (auto *gepInst = dyn_cast<GetElementPtrInst>(user)) {
       if (gepInst->getNumIndices() < 2) {
@@ -120,30 +126,59 @@ static bool fixGlobalStruct(GlobalVariable *globalVar, PaddedStruct &padded) {
     }
   }
 
-  // TODO: Fix initializer
+  auto *int8Ty = Type::getInt8Ty(globalVar->getContext());
+
+  Constant *initializer = nullptr;
+  if (auto *structInit = dyn_cast<ConstantStruct>(globalVar->getInitializer())) {
+    SmallVector<Constant *> fields;
+    fields.resize(padded.type->getNumElements(), nullptr);
+    for (auto &pair : padded.newElementByOldElement) {
+      unsigned int oldElement = pair.first;
+      unsigned int newElement = pair.second;
+      fields[newElement] = structInit->getOperand(oldElement);
+    }
+    for (unsigned int i = 0; i < fields.size(); ++i) {
+      if (!fields[i]) {
+        fields[i] = UndefValue::get(padded.type->getElementType(i));
+      }
+    }
+    initializer = ConstantStruct::get(padded.type, fields);
+  } else if (auto *zeroInit = dyn_cast<ConstantAggregateZero>(globalVar->getInitializer())) {
+    initializer = ConstantAggregateZero::get(padded.type);
+  } else if (auto *poisonInit = dyn_cast<PoisonValue>(globalVar->getInitializer())) {
+    initializer = PoisonValue::get(padded.type);
+  } else if (auto *undefInit = dyn_cast<UndefValue>(globalVar->getInitializer())) {
+    initializer = UndefValue::get(padded.type);
+  } else if (globalVar->getInitializer() != nullptr) {
+    errs() << "Unable to pad struct - unknown initializer format\n";
+    return false;
+  }
+  
+  errs() << "Replacing " << globalVar->getName() << " with new, padded global\n";
+
   auto *newGlobalVar = new GlobalVariable(
+    M,
     padded.type,
     globalVar->isConstant(),
     globalVar->getLinkage(),
-    globalVar->getInitializer(),
+    initializer,
     globalVar->getName(),
+    nullptr,
     globalVar->getThreadLocalMode(),
     globalVar->getAddressSpace(),
     globalVar->isExternallyInitialized());
-  
-  globalVar->replaceAllUsesWith(newGlobalVar);
-  errs() << "Replacing " << globalVar->getName() << " with new, padded global\n";
+  newGlobalVar->setAlignment(Align(globalVar->getAlignment()));
 
-  auto *int32Ty = IntegerType::get(globalVar->getContext(), 32);
+  auto *int32Ty = Type::getInt32Ty(globalVar->getContext());
   for (auto *user : globalVar->users()) {
     if (auto *gepInst = dyn_cast<GetElementPtrInst>(user)) {
       SmallVector<Value *> newIndices;
       size_t i = 0;
       for (auto &indexUse : gepInst->indices()) {
-        newIndices.push_back(indexUse.getUser());
+        newIndices.push_back(indexUse);
         if (i == 1) { // The index that might need to change
           unsigned int oldElement = static_cast<unsigned int>(
-            cast<ConstantInt>(indexUse.getUser())->getZExtValue());
+            cast<ConstantInt>(indexUse)->getZExtValue());
           unsigned int newElement = padded.newElementByOldElement[oldElement];
           auto *newConst = ConstantInt::get(int32Ty, newElement);
           newIndices.push_back(newConst);
@@ -151,22 +186,27 @@ static bool fixGlobalStruct(GlobalVariable *globalVar, PaddedStruct &padded) {
         ++i;
       }
       auto *newInst = GetElementPtrInst::Create(padded.type, newGlobalVar, newIndices);
+      newInst->setIsInBounds(gepInst->isInBounds());
       gepInst->replaceAllUsesWith(newInst);
     } else if (auto *constExpr = dyn_cast<ConstantExpr>(user)) {
-      //SmallVector<??> operands = constExpr
       SmallVector<Constant *> operands;
       for (auto &use : constExpr->operands()) {
-        operands.push_back(cast<Constant>(use.getUser()));
+        operands.push_back(cast<Constant>(use));
       }
       assert(operands.size() >= 3);
+      operands[0] = newGlobalVar;
       unsigned int oldElement = static_cast<unsigned int>(
         cast<ConstantInt>(operands[2])->getZExtValue());
       unsigned int newElement = padded.newElementByOldElement[oldElement];
       auto *newConst = ConstantInt::get(int32Ty, newElement);
-      auto *newConstExpr = constExpr->getWithOperands(operands);
+      operands[2] = newConst;
+
+      auto *newConstExpr = constExpr->getWithOperands(operands, padded.type, false, padded.type);
       constExpr->replaceAllUsesWith(newConstExpr);
     }
   }
+  globalVar->eraseFromParent();
+
   return true;
 }
 
@@ -216,7 +256,9 @@ struct Fix583 : public ModulePass {
           }
         }
       } else {
+        errs() << "Aligning " << conflict.entry1.variableName << " to cache boundary\n";
         global1->setAlignment(Align(cacheLineSize));
+        errs() << "Aligning " << conflict.entry2.variableName << " to cache boundary\n";
         global2->setAlignment(Align(cacheLineSize));
         changed = true;
       }
@@ -239,7 +281,7 @@ struct Fix583 : public ModulePass {
           }
           errs() << '\n';
           PaddedStruct padded(M, type, layout, conflictingElements);
-          changed = fixGlobalStruct(globalVar, padded) || changed;
+          changed = fixGlobalStruct(M, globalVar, padded) || changed;
         }
       }
     }
