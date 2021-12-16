@@ -133,8 +133,8 @@ int main(int argc, char **argv) {
   for (auto &ca : priority_cache) {
     auto &ma1 = ca.second.var1;
     auto &ma2 = ca.second.var2;
-    out << std::hex << ma1.name << " " << ma1.accessOffset << " "
-        << ma1.accessSize << " " << ma2.name << " " << ma2.accessOffset << " "
-        << ma2.accessSize << " " << ca.second.priority << std::endl;
+    out << ma1.name << " " << ma1.accessOffset << " " << ma1.accessSize << " "
+        << ma2.name << " " << ma2.accessOffset << " " << ma2.accessSize << " "
+        << ca.second.priority << std::endl;
   }
 }
