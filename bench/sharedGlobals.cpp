@@ -10,7 +10,7 @@ volatile int thread_data3 = 0;
 volatile int thread_data4 = 0;
 } // namespace
 
-const int NUM_LOOPS = 10;
+const int NUM_LOOPS = 100000;
 const int NUM_RUNS = 1;
 
 double compute(struct timespec start, struct timespec end) {
@@ -28,50 +28,11 @@ void runThread(volatile int *threadData) {
 
 int main() {
   timespec tpBegin1, tpEnd1;
-  volatile int *thread1_data;
-  volatile int *thread2_data;
-  int data_choice1, data_choice2;
-  std::cout << "Input thread data selection:" << std::endl;
-  std::cin >> data_choice1 >> data_choice2;
-
-  switch (data_choice1) {
-  case 1:
-    thread1_data = &thread_data1;
-    break;
-  case 2:
-    thread1_data = &thread_data2;
-    break;
-  case 3:
-    thread1_data = &thread_data3;
-    break;
-  case 4:
-    thread1_data = &thread_data4;
-    break;
-  default:
-    exit(1);
-  }
-
-  switch (data_choice2) {
-  case 1:
-    thread2_data = &thread_data1;
-    break;
-  case 2:
-    thread2_data = &thread_data2;
-    break;
-  case 3:
-    thread2_data = &thread_data3;
-    break;
-  case 4:
-    thread2_data = &thread_data4;
-    break;
-  default:
-    exit(1);
-  }
 
   clock_gettime(CLOCK_REALTIME, &tpBegin1);
   for (int i = 0; i < NUM_RUNS; i++) {
-    std::thread thread1{runThread, thread1_data};
-    std::thread thread2{runThread, thread2_data};
+    std::thread thread1{runThread, &thread_data1};
+    std::thread thread2{runThread, &thread_data3};
     thread1.join();
     thread2.join();
   }
