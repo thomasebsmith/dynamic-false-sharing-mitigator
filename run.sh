@@ -64,3 +64,4 @@ echo
 # TODO:ls
 # 	Build fix pass, and run fix pass on output from map addr
 # 	Get fix output, and evaluate it
+./src/run.sh ${BENCH} fix
