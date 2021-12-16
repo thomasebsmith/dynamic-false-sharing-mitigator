@@ -35,6 +35,9 @@ make obj-intel64/mdcache.so
 echo "Successfully compiled mdcache.so"
 echo
 
+# Clean up old files
+rm -f *.out *.interferences fs_globals.txt
+
 # Run the globals pass
 cd ${REPO_ROOT}
 cd src/ 
