@@ -1,4 +1,5 @@
 ///// LLVM analysis pass to mitigate false sharing based on profiling data /////
+#include "llvm/ADT/Optional.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/Pass.h"
 #include "llvm/IR/Module.h"
@@ -37,7 +38,7 @@ namespace {
 struct Conflict {
   CacheLineEntry entry1;
   CacheLineEntry entry2;
-  uint64_t priority; // TODO: Use this information
+  uint64_t priority;
 };
 }
 
@@ -236,12 +237,23 @@ struct Fix583 : public ModulePass {
   bool runOnModule(Module &M) override {
     bool changed = false;
     auto conflicts = getPotentialFS();
+    std::sort(conflicts.begin(), conflicts.end(), [](auto &c1, auto &c2) {
+      return c1.priority > c2.priority;
+    });
 
     auto &dataLayout = M.getDataLayout();
 
     std::unordered_map<StructType *, std::unordered_map<GlobalVariable *, std::set<size_t>>> structAccesses;
 
+    Optional<uint64_t> priorityThreshold;
+
     for (auto &conflict : conflicts) {
+      if (!priorityThreshold) {
+        priorityThreshold = conflict.priority / 10;
+      }
+      if (conflict.priority < *priorityThreshold) {
+        break;
+      }
       auto *global1 = M.getGlobalVariable(conflict.entry1.variableName, true);
       auto *global2 = M.getGlobalVariable(conflict.entry2.variableName, true);
       if (!global1 || !global2) {
