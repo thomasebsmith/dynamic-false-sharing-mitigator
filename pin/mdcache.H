@@ -264,7 +264,9 @@ public:
   UINT32 CALC_RESULT_INDEX(ACCESS_RESULT x) const {
     switch (x) {
     case CACHE_MISS:
-      return 0 case CACHE_TOMBSTONE : return 1;
+      return 0;
+    case CACHE_TOMBSTONE:
+      return 1;
     case CACHE_HIT:
       return 2;
     }
