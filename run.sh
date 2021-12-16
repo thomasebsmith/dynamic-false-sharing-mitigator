@@ -24,6 +24,15 @@ make obj-intel64/pinatrace.so
 echo "Successfully compiled pinatrace.so"
 echo
 
+cd ${REPO_ROOT}
+cp pin/mdcache.cpp ${PINATRACE_DIR}
+cp pin/mdcache.H ${PINATRACE_DIR}
+cp pin/mutex.PH ${PINATRACE_DIR}
+cd ${PINATRACE_DIR}
+make obj-intel64/mdcache.so
+echo "Successfully compiled mdcache.so"
+echo
+
 # Run the globals pass
 cd ${REPO_ROOT}
 cd src/ 
@@ -36,6 +45,13 @@ echo
 cd ${REPO_ROOT}
 ${PATH_TO_PIN}/pin -t ${PINATRACE_DIR}/obj-intel64/pinatrace.so -- ${REPO_ROOT}/src/build/run/${BENCHNAME}_globals
 echo "Successfully ran pinatrace on the globals pass. Got pinatrace.out as well as fs_globals.txt."
+echo
+
+# Run pinatrace on the global pass 
+cd ${REPO_ROOT}
+${PATH_TO_PIN}/pin -t ${PINATRACE_DIR}/obj-intel64/mdcache.so -- ${REPO_ROOT}/src/build/run/${BENCHNAME}_globals
+MDCACHE_OUTPUT_FNAME=mdcache.out.cacheline64.interferences
+echo "Successfully ran mdcache on the globals pass. Got mdcache.out as well as "
 echo
 
 # Run detect on pinatrace.out to get a list of interferences
@@ -55,7 +71,7 @@ touch mdcache.out
 cd pin/MapAddr 
 make clean 
 make all 
-./MapAddr "${REPO_ROOT}/mdcache.out" "${REPO_ROOT}/${DETECT_OUTPUT_FNAME}" "${REPO_ROOT}/fs_globals.txt"
+./MapAddr "${REPO_ROOT}/${MDCACHE_OUTPUT_FNAME}" "${REPO_ROOT}/${DETECT_OUTPUT_FNAME}" "${REPO_ROOT}/fs_globals.txt"
 mv mapped_conflicts.out ${REPO_ROOT}
 cd ${REPO_ROOT}
 echo "Successfully ran MapAddr to get mapped_conflicts.out"
@@ -64,4 +80,5 @@ echo
 # TODO:ls
 # 	Build fix pass, and run fix pass on output from map addr
 # 	Get fix output, and evaluate it
+echo "APPLYING FIX"
 ./src/run.sh ${BENCH} fix

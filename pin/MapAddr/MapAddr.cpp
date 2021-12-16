@@ -84,9 +84,9 @@ int main(int argc, char **argv) {
 
   if (argc != 4) {
     std::cerr << "Usage: " << argv[0]
-              << " [path to mdcache.out] [path to *.interferences] [path to "
-                 "fs_globals.txt]"
-              << std::endl;
+              << " [path to mdcache.out.cacheline64.interferences] [path to "
+                 "*.interferences]"
+              << "[path to fs_globals.txt] " << std::endl;
     exit(1);
   }
 
@@ -107,9 +107,23 @@ int main(int argc, char **argv) {
   std::sort(global_vars.begin(), global_vars.end());
   printf("done sorting\n");
 
-  //   while (realized_conflicting_addrs >> addr1 >> addr2 >> priority) {
-  // priority = some value
-  //   }
+  while (realized_conflicting_addrs >> addr1 >> addr2 >> priority) {
+    auto realaddr1 = string_to_uint64(addr1, 16);
+    auto realaddr2 = string_to_uint64(addr2, 16);
+    conflicting_addr addrs = {realaddr1, realaddr2};
+    conflicting_access ca;
+    ca.priority = priority;
+    ca.var1 = addr_to_named_access(realaddr1, global_vars);
+    ca.var2 = addr_to_named_access(realaddr2, global_vars);
+    if (ca.var1.name.empty() || ca.var2.name.empty()) {
+      continue;
+    }
+    if (priority_cache.count(addrs)) {
+      priority_cache[addrs].priority += 1;
+    } else {
+      priority_cache[addrs] = ca;
+    }
+  }
 
   priority = 1;
   while (potential_conflicting_addrs >> addr1 >> addr2) {
