@@ -5,6 +5,15 @@
 
 ## Organization
 - `bench` - Benchmark programs that exhibit false sharing
+- `docs` - pdfs explaining more about this project
+  - [`demo.pdf`](docs/demo.pdf) - Visual overview of design and an example
+  - [`report.pdf`](docs/report.pdf) - Detailed report on the system
+- `pin` - Source code for false sharing detection
+  - Intel Pin pinatrace: `pinatrace.cpp`
+  - Intel Pin multicore cache simulator: `mdcache.H`, `mdcache.cpp`, `mutex.PH`
+  - `detect` - Detects false sharing from `pinatrace` output
+  - `MapAddr` - Matches variable names from LLVM globals pass with interferences
+    outputted by `pinatrace`/`detect` and `mdcache`
 - `src`   - Source code for the compiler passes
   - `globals` - First pass to output the names, locations,
                 and sizes of all global variables at the
