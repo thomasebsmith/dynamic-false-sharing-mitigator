@@ -36,6 +36,7 @@ echo "Successfully compiled mdcache.so"
 echo
 
 # Clean up old files
+cd ${REPO_ROOT}
 rm -f *.out *.interferences fs_globals.txt
 echo "Cleaned up old output files"
 echo
