@@ -2,12 +2,14 @@ build/
 *.bc
 fs_profile.txt
 fs_globals.txt
+fs_conflicts.txt
 bench/sharedArray
-bench/sharedStruct 
-bench/*prof 
+bench/sharedStruct
+bench/basicGlobals
+bench/*prof
 src/*prof*
 src/*.out
 .vscode/
-pin/detect/detect 
+pin/detect/detect
 pin/detect/*.out
 !pin/detect/pinatrace_sample.out

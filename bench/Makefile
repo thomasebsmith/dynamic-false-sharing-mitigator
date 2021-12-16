@@ -1,9 +1,14 @@
+CC = g++ -O0 -pthread
 
-sharedArray:
-	g++ sharedArray.cpp -O0 -pthread -o sharedArray
+sharedArray: sharedArray.cpp
+	$(CC) $^ -o $@
+sharedStruct: sharedStruct.cpp
+	$(CC) $^ -o $@
+basicGlobals: basicGlobals.cpp
+	$(CC) $^ -o $@
 
 clean:
-	rm -f sharedArray 
+	rm -f sharedArray sharedStruct basicGlobals
 
 .PHONY: clean
 
