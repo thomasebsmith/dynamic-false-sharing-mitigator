@@ -192,8 +192,8 @@ public:
             // If we find a tombstone, it could still be in there, so don't
             // break.
             result = CACHE_TOMBSTONE;
-            std::cerr << "interference between " << (void *)addr << " and "
-                      << (void *)_tags[index].tombstoneAddr() << "\n";
+            // std::cerr << "interference between " << (void *)addr << " and "
+            //           << (void *)_tags[index].tombstoneAddr() << "\n";
             ADDRINT lower = std::min(_tags[index].tombstoneAddr(), addr);
             ADDRINT upper = std::max(_tags[index].tombstoneAddr(), addr);
             // std::cerr << "\tdistance of " << upper - lower << " bytes\n";
@@ -262,7 +262,12 @@ public:
   } CACHE_TYPE;
 
   UINT32 CALC_RESULT_INDEX(ACCESS_RESULT x) const {
-    return __builtin_popcount(x);
+    switch (x) {
+    case CACHE_MISS:
+      return 0 case CACHE_TOMBSTONE : return 1;
+    case CACHE_HIT:
+      return 2;
+    }
   }
 
 protected:
