@@ -3,17 +3,17 @@
 #include <thread>
 #include <vector>
 
-const int NUM_RUNS = 1;
-const int NUM_THREADS = 20;
-const int NUM_LOOPS = 1000;
+const int NUM_RUNS = 10;
+const int NUM_THREADS = 40;
+const int NUM_LOOPS = 1000000;
 
 namespace {
 struct MyStruct {
     std::mutex m1;
     volatile unsigned char m1Data[NUM_THREADS];
 };
-MyStruct data{};
 }
+MyStruct data{};
 
 void run_thread(int thread_id) {
     while (!data.m1.try_lock()) {}

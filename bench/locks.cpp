@@ -14,7 +14,7 @@ std::vector<int> v1;
 std::vector<int> v2;
 
 const int NUM_LOOPS = 10000;
-const int NUM_RUNS = 1;
+const int NUM_RUNS = 500;
 
 double compute(struct timespec start, struct timespec end) {
   double t;

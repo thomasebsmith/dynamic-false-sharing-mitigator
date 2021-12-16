@@ -2,7 +2,7 @@
 set -Eeuo pipefail 
 
 REPO_ROOT=$(pwd)
-BENCHNAME=basicGlobals # Change if necessary
+BENCHNAME=basicLocks # Change if necessary
 BENCH=${REPO_ROOT}/bench/${BENCHNAME}
 BENCH=${REPO_ROOT}/bench/${BENCHNAME} 
 CACHELINESIZE=64 # Change if necessary

@@ -196,6 +196,7 @@ static bool fixGlobalStruct(Module &M, GlobalVariable *globalVar, PaddedStruct &
       auto *newInst = GetElementPtrInst::Create(padded.type, newGlobalVar, newIndices);
       newInst->setIsInBounds(gepInst->isInBounds());
       gepInst->replaceAllUsesWith(newInst);
+      newInst->insertBefore(gepInst);
       toErase.push_back(gepInst);
     } else if (auto *constExpr = dyn_cast<ConstantExpr>(user)) {
       SmallVector<Constant *> operands;

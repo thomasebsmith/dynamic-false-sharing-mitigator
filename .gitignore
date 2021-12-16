@@ -6,6 +6,8 @@ mapped_conflicts.txt
 bench/sharedArray
 bench/sharedStruct
 bench/basicGlobals
+bench/locks
+bench/basicLocks
 bench/*prof
 src/*prof*
 src/*.out
