@@ -10,11 +10,12 @@
 
 #include "pin.H"
 
-#include <iostream>
 #include <fstream>
+#include <iostream>
+#include <map>
 
 #include "mdcache.H"
-#include "mutex.H"
+#include "mutex.PH"
 #include "pin_profile.H"
 using std::cerr;
 using std::endl;
@@ -22,6 +23,22 @@ using std::ostringstream;
 using std::string;
 
 std::ofstream outFile;
+std::ofstream interferenceFile;
+
+template <typename T> std::string sstr(T t) {
+  std::ostringstream sstr;
+  // fold expression
+  sstr << std::dec << t;
+  return sstr.str();
+}
+
+bool replace(std::string &str, const std::string &from, const std::string &to) {
+  size_t start_pos = str.find(from);
+  if (start_pos == std::string::npos)
+    return false;
+  str.replace(start_pos, from.length(), to);
+  return true;
+}
 
 /* ===================================================================== */
 /* Commandline Switches */
@@ -29,26 +46,38 @@ std::ofstream outFile;
 
 KNOB<string> KnobOutputFile(KNOB_MODE_WRITEONCE, "pintool", "o", "mdcache.out",
                             "specify mdcache file name");
-KNOB< BOOL > KnobTrackLoads(KNOB_MODE_WRITEONCE, "pintool", "tl", "0", "track individual loads -- increases profiling time");
-KNOB< BOOL > KnobTrackStores(KNOB_MODE_WRITEONCE, "pintool", "ts", "0", "track individual stores -- increases profiling time");
-KNOB< UINT32 > KnobThresholdHit(KNOB_MODE_WRITEONCE, "pintool", "rh", "100", "only report memops with hit count above threshold");
-KNOB< UINT32 > KnobThresholdMiss(KNOB_MODE_WRITEONCE, "pintool", "rm", "100",
-                                 "only report memops with miss count above threshold");
-KNOB< UINT32 > KnobCacheSize(KNOB_MODE_WRITEONCE, "pintool", "c", "32", "cache size in kilobytes");
-KNOB< UINT32 > KnobLineSize(KNOB_MODE_WRITEONCE, "pintool", "b", "32", "cache block size in bytes");
-KNOB< UINT32 > KnobAssociativity(KNOB_MODE_WRITEONCE, "pintool", "a", "4", "cache associativity (1 for direct mapped)");
+KNOB<BOOL> KnobTrackLoads(KNOB_MODE_WRITEONCE, "pintool", "tl", "0",
+                          "track individual loads -- increases profiling time");
+KNOB<BOOL>
+    KnobTrackStores(KNOB_MODE_WRITEONCE, "pintool", "ts", "0",
+                    "track individual stores -- increases profiling time");
+KNOB<UINT32>
+    KnobThresholdHit(KNOB_MODE_WRITEONCE, "pintool", "rh", "100",
+                     "only report memops with hit count above threshold");
+KNOB<UINT32>
+    KnobThresholdMiss(KNOB_MODE_WRITEONCE, "pintool", "rm", "100",
+                      "only report memops with miss count above threshold");
+KNOB<UINT32> KnobCacheSize(KNOB_MODE_WRITEONCE, "pintool", "c", "32",
+                           "cache size in kilobytes");
+KNOB<UINT32> KnobLineSize(KNOB_MODE_WRITEONCE, "pintool", "b", "32",
+                          "cache block size in bytes");
+KNOB<UINT32> KnobAssociativity(KNOB_MODE_WRITEONCE, "pintool", "a", "4",
+                               "cache associativity (1 for direct mapped)");
+KNOB<string> KnobInterferenceOutputFile(
+    KNOB_MODE_WRITEONCE, "pintool", "i",
+    std::string("mdcache.out.cacheline") + "XX" + ".interferences",
+    "specify mdcache interference file name");
 
 /* ===================================================================== */
 /* Print Help Message                                                    */
 /* ===================================================================== */
 
-INT32 Usage()
-{
-    cerr << "This tool represents a cache simulator.\n"
-            "\n";
+INT32 Usage() {
+  cerr << "This tool represents a cache simulator.\n"
+          "\n";
 
-    cerr << KNOB_BASE::StringKnobSummary() << endl;
-    return -1;
+  cerr << KNOB_BASE::StringKnobSummary() << endl;
+  return -1;
 }
 
 /* ===================================================================== */
@@ -56,192 +85,267 @@ INT32 Usage()
 /* ===================================================================== */
 
 // wrap configuation constants into their own name space to avoid name clashes
-namespace DL1
-{
-const UINT32 max_sets                          = KILO; // cacheSize / (lineSize * associativity);
-const UINT32 max_associativity                 = 256;  // associativity;
+namespace DL1 {
+const UINT32 max_sets = KILO;         // cacheSize / (lineSize * associativity);
+const UINT32 max_associativity = 256; // associativity;
 const CACHE_ALLOC::STORE_ALLOCATION allocation = CACHE_ALLOC::STORE_ALLOCATE;
 
 typedef CACHE_ROUND_ROBIN(max_sets, max_associativity, allocation) CACHE;
 } // namespace DL1
 
-DL1::CACHE* dl1 = NULL;
+std::map<UINT32, DL1::CACHE *> caches;
+shared_mutex cachelist_mu;
+mutex invalidation_mutex;
 
-typedef enum
-{
-    COUNTER_MISS = 0,
-    COUNTER_HIT  = 1,
-    COUNTER_NUM
-} COUNTER;
+// You must have unique access to cachelist_mu
+void insert_cache_for(UINT32 thread) {
+  DL1::CACHE *cache = new DL1::CACHE(
+      "L1 Data Cache for Core " + sstr(thread), KnobCacheSize.Value() * KILO,
+      KnobLineSize.Value(), KnobAssociativity.Value(), invalidation_mutex);
+  std::map<UINT32, DL1::CACHE *>::iterator it;
+  for (it = caches.begin(); it != caches.end(); it++) {
+    it->second->RegisterPeer(cache);
+    cache->RegisterPeer(it->second);
+  }
+  caches[thread] = cache;
+}
 
-typedef COUNTER_ARRAY< UINT64, COUNTER_NUM > COUNTER_HIT_MISS;
+// You may not have possession of cachelist_mu
+void ensure_cache_exists(UINT32 thread) {
+  cachelist_mu.lock_shared();
+  if (!caches.count(thread)) {
+    cachelist_mu.unlock();
+    {
+      unique_lock unique(cachelist_mu);
+      if (!caches.count(thread))
+        insert_cache_for(thread);
+    }
+    cachelist_mu.lock_shared();
+  }
+  cachelist_mu.unlock_shared();
+}
+
+typedef enum { COUNTER_MISS = 0, COUNTER_HIT = 1, COUNTER_NUM } COUNTER;
+
+typedef COUNTER_ARRAY<UINT64, COUNTER_NUM> COUNTER_HIT_MISS;
 
 // holds the counters with misses and hits
 // conceptually this is an array indexed by instruction address
-COMPRESSOR_COUNTER< ADDRINT, UINT32, COUNTER_HIT_MISS > profile;
+COMPRESSOR_COUNTER<ADDRINT, UINT32, COUNTER_HIT_MISS> profile;
 
 /* ===================================================================== */
 
-VOID LoadMulti(ADDRINT addr, UINT32 size, UINT32 instId)
-{
-    // first level D-cache
-    const BOOL dl1Hit = dl1->Access(addr, size, CACHE_BASE::ACCESS_TYPE_LOAD);
+VOID LoadMulti(ADDRINT addr, UINT32 size, UINT32 instId, UINT32 threadID) {
+  // first level D-cache
+  ensure_cache_exists(threadID);
+  DL1::CACHE *cache;
+  {
+    shared_lock lock(cachelist_mu);
+    cache = caches.find(threadID)->second;
+  }
 
-    const COUNTER counter = dl1Hit ? COUNTER_HIT : COUNTER_MISS;
-    profile[instId][counter]++;
+  const BOOL cacheHit = cache->Access(addr, size, CACHE_BASE::ACCESS_TYPE_LOAD);
+
+  const COUNTER counter = cacheHit ? COUNTER_HIT : COUNTER_MISS;
+  profile[instId][counter]++;
 }
 
 /* ===================================================================== */
 
-VOID StoreMulti(ADDRINT addr, UINT32 size, UINT32 instId)
-{
-    // first level D-cache
-    const BOOL dl1Hit = dl1->Access(addr, size, CACHE_BASE::ACCESS_TYPE_STORE);
+VOID StoreMulti(ADDRINT addr, UINT32 size, UINT32 instId, UINT32 threadID) {
+  // first level D-cache
+  ensure_cache_exists(threadID);
+  DL1::CACHE *cache;
+  {
+    shared_lock lock(cachelist_mu);
+    cache = caches.find(threadID)->second;
+  }
 
-    const COUNTER counter = dl1Hit ? COUNTER_HIT : COUNTER_MISS;
-    profile[instId][counter]++;
+  const BOOL cacheHit =
+      cache->Access(addr, size, CACHE_BASE::ACCESS_TYPE_STORE);
+
+  const COUNTER counter = cacheHit ? COUNTER_HIT : COUNTER_MISS;
+  profile[instId][counter]++;
 }
 
 /* ===================================================================== */
 
-VOID LoadSingle(ADDRINT addr, UINT32 instId)
-{
-    // @todo we may access several cache lines for
-    // first level D-cache
-    const BOOL dl1Hit = dl1->AccessSingleLine(addr, CACHE_BASE::ACCESS_TYPE_LOAD);
+VOID LoadSingle(ADDRINT addr, UINT32 instId, UINT32 threadID) {
+  // @todo we may access several cache lines for
+  // first level D-cache
+  ensure_cache_exists(threadID);
+  DL1::CACHE *cache;
+  {
+    shared_lock lock(cachelist_mu);
+    cache = caches.find(threadID)->second;
+  }
 
-    const COUNTER counter = dl1Hit ? COUNTER_HIT : COUNTER_MISS;
-    profile[instId][counter]++;
+  const BOOL cacheHit =
+      cache->AccessSingleLine(addr, CACHE_BASE::ACCESS_TYPE_LOAD);
+
+  const COUNTER counter = cacheHit ? COUNTER_HIT : COUNTER_MISS;
+  profile[instId][counter]++;
 }
 /* ===================================================================== */
 
-VOID StoreSingle(ADDRINT addr, UINT32 instId)
-{
-    // @todo we may access several cache lines for
-    // first level D-cache
-    const BOOL dl1Hit = dl1->AccessSingleLine(addr, CACHE_BASE::ACCESS_TYPE_STORE);
+VOID StoreSingle(ADDRINT addr, UINT32 instId, UINT32 threadID) {
+  // @todo we may access several cache lines for
+  // first level D-cache
+  ensure_cache_exists(threadID);
+  DL1::CACHE *cache;
+  {
+    shared_lock lock(cachelist_mu);
+    cache = caches.find(threadID)->second;
+  }
 
-    const COUNTER counter = dl1Hit ? COUNTER_HIT : COUNTER_MISS;
-    profile[instId][counter]++;
+  const BOOL cacheHit =
+      cache->AccessSingleLine(addr, CACHE_BASE::ACCESS_TYPE_STORE);
+
+  const COUNTER counter = cacheHit ? COUNTER_HIT : COUNTER_MISS;
+  profile[instId][counter]++;
 }
 
 /* ===================================================================== */
 
-VOID LoadMultiFast(ADDRINT addr, UINT32 size) { dl1->Access(addr, size, CACHE_BASE::ACCESS_TYPE_LOAD); }
+VOID LoadMultiFast(ADDRINT addr, UINT32 size, UINT32 threadID) {
+  ensure_cache_exists(threadID);
+  DL1::CACHE *cache;
+  {
+    shared_lock lock(cachelist_mu);
+    cache = caches.find(threadID)->second;
+  }
+
+  cache->Access(addr, size, CACHE_BASE::ACCESS_TYPE_LOAD);
+}
 
 /* ===================================================================== */
 
-VOID StoreMultiFast(ADDRINT addr, UINT32 size) { dl1->Access(addr, size, CACHE_BASE::ACCESS_TYPE_STORE); }
+VOID StoreMultiFast(ADDRINT addr, UINT32 size, UINT32 threadID) {
+  ensure_cache_exists(threadID);
+  DL1::CACHE *cache;
+  {
+    shared_lock lock(cachelist_mu);
+    cache = caches.find(threadID)->second;
+  }
+
+  cache->Access(addr, size, CACHE_BASE::ACCESS_TYPE_STORE);
+}
 
 /* ===================================================================== */
 
-VOID LoadSingleFast(ADDRINT addr) { dl1->AccessSingleLine(addr, CACHE_BASE::ACCESS_TYPE_LOAD); }
+VOID LoadSingleFast(ADDRINT addr, UINT32 threadID) {
+  ensure_cache_exists(threadID);
+  DL1::CACHE *cache;
+  {
+    shared_lock lock(cachelist_mu);
+    cache = caches.find(threadID)->second;
+  }
+
+  cache->AccessSingleLine(addr, CACHE_BASE::ACCESS_TYPE_LOAD);
+}
 
 /* ===================================================================== */
 
-VOID StoreSingleFast(ADDRINT addr) { dl1->AccessSingleLine(addr, CACHE_BASE::ACCESS_TYPE_STORE); }
+VOID StoreSingleFast(ADDRINT addr, UINT32 threadID) {
+  ensure_cache_exists(threadID);
+    DL1::CACHE *cache;
+  {
+    shared_lock lock(cachelist_mu);
+    cache = caches.find(threadID)->second;
+  }
+
+
+  cache->AccessSingleLine(addr, CACHE_BASE::ACCESS_TYPE_STORE);
+}
 
 /* ===================================================================== */
 
-VOID Instruction(INS ins, void* v)
-{
-    if (!INS_IsStandardMemop(ins)) return;
+VOID Instruction(INS ins, void *v) {
+  if (!INS_IsStandardMemop(ins))
+    return;
 
-    if (INS_MemoryOperandCount(ins) == 0) return;
+  if (INS_MemoryOperandCount(ins) == 0)
+    return;
 
-    UINT32 readSize = 0, writeSize = 0;
-    UINT32 readOperandCount = 0, writeOperandCount = 0;
+  UINT32 readSize = 0, writeSize = 0;
+  UINT32 readOperandCount = 0, writeOperandCount = 0;
 
-    for (UINT32 opIdx = 0; opIdx < INS_MemoryOperandCount(ins); opIdx++)
-    {
-        if (INS_MemoryOperandIsRead(ins, opIdx))
-        {
-            readSize = INS_MemoryOperandSize(ins, opIdx);
-            readOperandCount++;
-            break;
-        }
-        if (INS_MemoryOperandIsWritten(ins, opIdx))
-        {
-            writeSize = INS_MemoryOperandSize(ins, opIdx);
-            writeOperandCount++;
-            break;
-        }
+  for (UINT32 opIdx = 0; opIdx < INS_MemoryOperandCount(ins); opIdx++) {
+    if (INS_MemoryOperandIsRead(ins, opIdx)) {
+      readSize = INS_MemoryOperandSize(ins, opIdx);
+      readOperandCount++;
+      break;
     }
-
-    if (readOperandCount > 0)
-    {
-        // map sparse INS addresses to dense IDs
-        const ADDRINT iaddr = INS_Address(ins);
-        const UINT32 instId = profile.Map(iaddr);
-
-        const BOOL single = (readSize <= 4);
-
-        if (KnobTrackLoads)
-        {
-            if (single)
-            {
-                INS_InsertPredicatedCall(ins, IPOINT_BEFORE, (AFUNPTR)LoadSingle, IARG_MEMORYREAD_EA, IARG_UINT32, instId,
-                                         IARG_END);
-            }
-            else
-            {
-                INS_InsertPredicatedCall(ins, IPOINT_BEFORE, (AFUNPTR)LoadMulti, IARG_MEMORYREAD_EA, IARG_MEMORYREAD_SIZE,
-                                         IARG_UINT32, instId, IARG_END);
-            }
-        }
-        else
-        {
-            if (single)
-            {
-                INS_InsertPredicatedCall(ins, IPOINT_BEFORE, (AFUNPTR)LoadSingleFast, IARG_MEMORYREAD_EA, IARG_END);
-            }
-            else
-            {
-                INS_InsertPredicatedCall(ins, IPOINT_BEFORE, (AFUNPTR)LoadMultiFast, IARG_MEMORYREAD_EA, IARG_MEMORYREAD_SIZE,
-                                         IARG_END);
-            }
-        }
+    if (INS_MemoryOperandIsWritten(ins, opIdx)) {
+      writeSize = INS_MemoryOperandSize(ins, opIdx);
+      writeOperandCount++;
+      break;
     }
+  }
 
-    if (writeOperandCount > 0)
-    {
-        // map sparse INS addresses to dense IDs
-        const ADDRINT iaddr = INS_Address(ins);
-        const UINT32 instId = profile.Map(iaddr);
-        const BOOL single   = (writeSize <= 4);
+  if (readOperandCount > 0) {
+    // map sparse INS addresses to dense IDs
+    const ADDRINT iaddr = INS_Address(ins);
+    const UINT32 instId = profile.Map(iaddr);
 
-        if (KnobTrackStores)
-        {
-            if (single)
-            {
-                INS_InsertPredicatedCall(ins, IPOINT_BEFORE, (AFUNPTR)StoreSingle, IARG_MEMORYWRITE_EA, IARG_UINT32, instId,
-                                         IARG_END);
-            }
-            else
-            {
-                INS_InsertPredicatedCall(ins, IPOINT_BEFORE, (AFUNPTR)StoreMulti, IARG_MEMORYWRITE_EA, IARG_MEMORYWRITE_SIZE,
-                                         IARG_UINT32, instId, IARG_END);
-            }
-        }
-        else
-        {
-            if (single)
-            {
-                INS_InsertPredicatedCall(ins, IPOINT_BEFORE, (AFUNPTR)StoreSingleFast, IARG_MEMORYWRITE_EA, IARG_END);
-            }
-            else
-            {
-                INS_InsertPredicatedCall(ins, IPOINT_BEFORE, (AFUNPTR)StoreMultiFast, IARG_MEMORYWRITE_EA, IARG_MEMORYWRITE_SIZE,
-                                         IARG_END);
-            }
-        }
+    const BOOL single = (readSize <= 4);
+
+    if (KnobTrackLoads) {
+      if (single) {
+        INS_InsertPredicatedCall(ins, IPOINT_BEFORE, (AFUNPTR)LoadSingle,
+                                 IARG_MEMORYREAD_EA, IARG_UINT32, instId,
+                                 IARG_THREAD_ID, IARG_END);
+      } else {
+        INS_InsertPredicatedCall(ins, IPOINT_BEFORE, (AFUNPTR)LoadMulti,
+                                 IARG_MEMORYREAD_EA, IARG_MEMORYREAD_SIZE,
+                                 IARG_UINT32, instId, IARG_THREAD_ID,
+                                   IARG_END);
+      }
+    } else {
+      if (single) {
+        INS_InsertPredicatedCall(ins, IPOINT_BEFORE, (AFUNPTR)LoadSingleFast,
+                                 IARG_MEMORYREAD_EA, IARG_THREAD_ID, IARG_END);
+      } else {
+        INS_InsertPredicatedCall(ins, IPOINT_BEFORE, (AFUNPTR)LoadMultiFast,
+                                 IARG_MEMORYREAD_EA, IARG_MEMORYREAD_SIZE,
+                                 IARG_THREAD_ID, IARG_END);
+      }
     }
+  }
+
+  if (writeOperandCount > 0) {
+    // map sparse INS addresses to dense IDs
+    const ADDRINT iaddr = INS_Address(ins);
+    const UINT32 instId = profile.Map(iaddr);
+    const BOOL single = (writeSize <= 4);
+
+    if (KnobTrackStores) {
+      if (single) {
+        INS_InsertPredicatedCall(ins, IPOINT_BEFORE, (AFUNPTR)StoreSingle,
+                                 IARG_MEMORYWRITE_EA, IARG_UINT32, instId,
+                                 IARG_THREAD_ID, IARG_END);
+      } else {
+        INS_InsertPredicatedCall(ins, IPOINT_BEFORE, (AFUNPTR)StoreMulti,
+                                 IARG_MEMORYWRITE_EA, IARG_MEMORYWRITE_SIZE,
+                                 IARG_UINT32, instId, IARG_THREAD_ID,
+                                   IARG_END);
+      }
+    } else {
+      if (single) {
+        INS_InsertPredicatedCall(ins, IPOINT_BEFORE, (AFUNPTR)StoreSingleFast,
+                                 IARG_MEMORYWRITE_EA, IARG_THREAD_ID, IARG_END);
+      } else {
+        INS_InsertPredicatedCall(ins, IPOINT_BEFORE, (AFUNPTR)StoreMultiFast,
+                                 IARG_MEMORYWRITE_EA, IARG_MEMORYWRITE_SIZE,
+                                 IARG_THREAD_ID, IARG_END);
+      }
+    }
+  }
 }
 
 /* ===================================================================== */
 
-VOID Fini(int code, VOID* v)
-{
+  VOID Fini(int code, VOID *v) {
     // print D-cache profile
     // @todo what does this print
 
@@ -251,55 +355,70 @@ VOID Fini(int code, VOID* v)
                "# DCACHE stats\n"
                "#\n";
 
-    outFile << dl1->StatsLong("# ", CACHE_BASE::CACHE_TYPE_DCACHE);
+    std::map<Interference, unsigned> counts;
 
-    if (KnobTrackLoads || KnobTrackStores)
-    {
-        outFile << "#\n"
-                   "# LOAD stats\n"
-                   "#\n";
+    std::map<UINT32, DL1::CACHE *>::iterator it;
+    for (it = caches.begin(); it != caches.end(); it++) {
+      DL1::CACHE *cache = it->second;
+      outFile << cache->StatsLong("# ", CACHE_BASE::CACHE_TYPE_DCACHE);
+      AddAllMappings(cache->InterferenceCounts(), counts);
+    }
 
-        outFile << profile.StringLong();
+    std::map<Interference, unsigned>::iterator cit;
+    interferenceFile << "Number of interferences: " << counts.size()
+                     << std::endl;
+    for (cit = counts.begin(); cit != counts.end(); cit++) {
+      interferenceFile << std::hex << cit->first.first << "\t"
+                       << cit->first.second << "\t" << cit->second << std::endl;
+    }
+
+    if (KnobTrackLoads || KnobTrackStores) {
+      outFile << "#\n"
+                 "# LOAD stats\n"
+                 "#\n";
+
+      outFile << profile.StringLong();
     }
     outFile.close();
-}
+    interferenceFile.close();
+  }
 
 /* ===================================================================== */
 /* Main                                                                  */
 /* ===================================================================== */
 
-int main(int argc, char* argv[])
-{
-    PIN_InitSymbols();
+    int main(int argc, char *argv[]) {
+      PIN_InitSymbols();
 
-    if (PIN_Init(argc, argv))
-    {
+      if (PIN_Init(argc, argv)) {
         return Usage();
+      }
+
+      outFile.open(KnobOutputFile.Value().c_str());
+      // Replace XX with the cachelinesize
+      std::string interferenceFilename = KnobInterferenceOutputFile.Value();
+      replace(interferenceFilename, "XX", sstr(KnobLineSize.Value()));
+      interferenceFile.open(interferenceFilename.c_str());
+
+      profile.SetKeyName("iaddr          ");
+      profile.SetCounterName("dcache:miss        dcache:hit");
+
+      COUNTER_HIT_MISS threshold;
+
+      threshold[COUNTER_HIT] = KnobThresholdHit.Value();
+      threshold[COUNTER_MISS] = KnobThresholdMiss.Value();
+
+      profile.SetThreshold(threshold);
+
+      INS_AddInstrumentFunction(Instruction, 0);
+      PIN_AddFiniFunction(Fini, 0);
+
+      // Never returns
+
+      PIN_StartProgram();
+
+      return 0;
     }
-
-    outFile.open(KnobOutputFile.Value().c_str());
-
-    dl1 = new DL1::CACHE("L1 Data Cache", KnobCacheSize.Value() * KILO, KnobLineSize.Value(), KnobAssociativity.Value());
-
-    profile.SetKeyName("iaddr          ");
-    profile.SetCounterName("dcache:miss        dcache:hit");
-
-    COUNTER_HIT_MISS threshold;
-
-    threshold[COUNTER_HIT]  = KnobThresholdHit.Value();
-    threshold[COUNTER_MISS] = KnobThresholdMiss.Value();
-
-    profile.SetThreshold(threshold);
-
-    INS_AddInstrumentFunction(Instruction, 0);
-    PIN_AddFiniFunction(Fini, 0);
-
-    // Never returns
-
-    PIN_StartProgram();
-
-    return 0;
-}
 
 /* ===================================================================== */
 /* eof */

@@ -7,6 +7,7 @@
  *  This file contains an ISA-portable PIN tool for tracing memory accesses.
  */
 
+// #include "mutex.PH"
 #include <fstream>
 #include <iomanip>
 #include <iostream>

@@ -204,7 +204,7 @@ struct Fix583 : public ModulePass {
 }  // end of anonymous namespace
 
 char Fix583::ID = 0;
-const std::string Fix583::inputFile = "fs_conflicts.txt";
+const std::string Fix583::inputFile = "mapped_conflicts.txt";
 static RegisterPass<Fix583> X("false-sharing-fix", "Pass to fix false sharing",
                               false /* Only looks at CFG */,
                               false /* Analysis Pass */);

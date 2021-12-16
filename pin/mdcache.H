@@ -16,9 +16,11 @@
 
 typedef UINT64 CACHE_STATS; // type of cache hit/miss counters
 
-#include "mutex.H"
+#include "mutex.PH"
+#include "pin.H"
 #include <algorithm>
 #include <sstream>
+#include <utility>
 #include <vector>
 using std::ostringstream;
 using std::string;
@@ -33,6 +35,22 @@ static string mydecstr(UINT64 v, UINT32 w) {
   string str(o.str());
   return str;
 }
+
+typedef std::pair<ADDRINT, ADDRINT> Interference;
+
+void AddAllMappings(const std::map<Interference, unsigned> &src,
+                    std::map<Interference, unsigned> &dst) {
+  std::map<Interference, unsigned>::const_iterator it;
+  for (it = src.begin(); it != src.end(); it++) {
+    dst[it->first] += it->second;
+  }
+}
+
+typedef enum {
+  CACHE_MISS = 0,
+  CACHE_TOMBSTONE = 1,
+  CACHE_HIT = 3,
+} ACCESS_RESULT;
 
 /*!
  *  @brief Checks if n is a power of 2.
@@ -87,17 +105,21 @@ static inline INT32 CeilLog2(UINT32 n) { return FloorLog2(n - 1) + 1; }
 class CACHE_TAG {
 private:
   ADDRINT _tag;
-  bool _is_tombstone;
+  INT64 _tombstone_addr;
 
 public:
   CACHE_TAG(ADDRINT tag = 0) {
     _tag = tag;
-    _is_tombstone = false;
+    _tombstone_addr = -1;
   }
   bool operator==(const CACHE_TAG &right) const { return _tag == right._tag; }
   operator ADDRINT() const { return _tag; }
-  void kill() { _is_tombstone = true; }
-  bool is_dead() { return _is_tombstone; }
+  void kill(ADDRINT addr) { _tombstone_addr = addr; }
+  bool is_dead() const { return _tombstone_addr >= 0; }
+  bool matches(const CACHE_TAG &other) const {
+    return other._tombstone_addr == _tombstone_addr;
+  }
+  ADDRINT tombstoneAddr() const { return _tombstone_addr; }
 };
 
 /*!
@@ -117,9 +139,11 @@ public:
   VOID SetAssociativity(UINT32 associativity) { ASSERTX(associativity == 1); }
   UINT32 GetAssociativity(UINT32 associativity) { return 1; }
 
-  ACCESS_RESULT Find(CACHE_TAG tag) { return (_tag == tag); }
+  ACCESS_RESULT Find(CACHE_TAG tag) {
+    return _tag == tag ? CACHE_HIT : CACHE_MISS;
+  }
   VOID Replace(CACHE_TAG tag) { _tag = tag; }
-  VOID Invalidate(CACHE_TAG tag) {}
+  VOID Invalidate(ADDRINT addr) {}
 };
 
 /*!
@@ -131,6 +155,7 @@ private:
   UINT32 _tagsLastIndex;
   UINT32 _nextReplaceIndex;
   UINT32 _nextTombstoneIndex;
+  std::map<Interference, unsigned> _interferenceCounts;
 
 public:
   ROUND_ROBIN(UINT32 associativity = MAX_ASSOCIATIVITY)
@@ -151,8 +176,11 @@ public:
     _nextTombstoneIndex = _tagsLastIndex;
   }
   UINT32 GetAssociativity(UINT32 associativity) { return _tagsLastIndex + 1; }
+  const std::map<Interference, unsigned> &GetInterferenceCounts() const {
+    return _interferenceCounts;
+  };
 
-  ACCESS_RESULT Find(CACHE_TAG tag) {
+  ACCESS_RESULT Find(CACHE_TAG tag, ADDRINT addr) {
     ACCESS_RESULT result = CACHE_MISS;
 
     for (INT32 index = _tagsLastIndex; index >= 0; index--) {
@@ -160,11 +188,20 @@ public:
       // tighter assembly loop for ARM that way ...
       if (_tags[index] == tag) {
         if (_tags[index].is_dead())
-          // If we find a tombstone, it could still be in there.
-          result = CACHE_TOMBSTONE;
-        else
+          if (_tags[index].matches(addr)) {
+            result = CACHE_MISS;
+          } else {
+            // If we find a tombstone, it could still be in there, so don't
+            // break.
+            result = CACHE_TOMBSTONE;
+            ADDRINT lower = std::min(tag.tombstoneAddr(), addr);
+            ADDRINT upper = std::max(tag.tombstoneAddr(), addr);
+            _interferenceCounts[std::make_pair(lower, upper)]++;
+          }
+        else {
           result = CACHE_HIT;
-        goto end;
+          goto end;
+        }
       }
     }
 
@@ -183,15 +220,15 @@ public:
     _nextReplaceIndex = (index == 0 ? _tagsLastIndex : index - 1);
   }
 
-  VOID Invalidate(CACHE_TAG tag) {
+  VOID Invalidate(ADDRINT addr) {
     for (INT32 index = _tagsLastIndex; index >= 0; index--) {
       // If we find it and it's alive, kill it
-      if (_tags[index] == tag && !_tags[index].is_dead()) {
-        _tags[index].kill();
+      if (_tags[index] == (CACHE_TAG)addr && !_tags[index].is_dead()) {
+        _tags[index].kill(addr);
         // Put it on the remove list
-        std::swap(_tags[index], _tags[_nextTombstoneIndex])
-            // Increment the remove list
-            _nextTombstoneIndex = (index == 0 ? _tagsLastIndex : index - 1);
+        std::swap(_tags[index], _tags[_nextTombstoneIndex]);
+        // Increment the remove list
+        _nextTombstoneIndex = (index == 0 ? _tagsLastIndex : index - 1);
       }
     }
   }
@@ -216,12 +253,6 @@ public:
     ACCESS_TYPE_INVALIDATE,
     ACCESS_TYPE_NUM
   } ACCESS_TYPE;
-
-  typedef enum {
-    CACHE_MISS = 0,
-    CACHE_TOMBSTONE = 1,
-    CACHE_HIT = 3,
-  } ACCESS_RESULT;
 
   typedef enum {
     CACHE_TYPE_ICACHE,
@@ -285,7 +316,7 @@ public:
   CACHE_STATS Hits() const { return SumAccess(CACHE_HIT); }
   CACHE_STATS Misses() const { return SumAccess(CACHE_MISS); }
   CACHE_STATS Tombstones() const { return SumAccess(CACHE_TOMBSTONE); }
-  CACHE_STATS Accesses() const { return Hits() + Misses() + Tombstones; }
+  CACHE_STATS Accesses() const { return Hits() + Misses() + Tombstones(); }
 
   VOID SplitAddress(const ADDRINT addr, CACHE_TAG &tag,
                     UINT32 &setIndex) const {
@@ -299,7 +330,6 @@ public:
     lineIndex = addr & lineMask;
     SplitAddress(addr, tag, setIndex);
   }
-
   string StatsLong(string prefix = "", CACHE_TYPE = CACHE_TYPE_DCACHE) const;
 };
 
@@ -334,11 +364,24 @@ string CACHE_BASE::StatsLong(string prefix, CACHE_TYPE cache_type) const {
     for (UINT32 i = 0; i < ACCESS_TYPE_NUM; i++) {
       const ACCESS_TYPE accessType = ACCESS_TYPE(i);
 
-      std::string type(accessType == ACCESS_TYPE_LOAD ? "Load" : "Store");
+      std::string type;
+      switch (accessType) {
+      case ACCESS_TYPE_LOAD:
+        type = "Load";
+        break;
+      case ACCESS_TYPE_STORE:
+        type = "Store";
+        break;
+      case ACCESS_TYPE_INVALIDATE:
+        type = "Invalidate";
+        break;
+      default:
+        assert(false);
+      }
 
       out += prefix + ljstr(type + "-Hits:      ", headerWidth) +
              mydecstr(Hits(accessType), numberWidth) + "  " +
-             fltstr(100.0 * Hits(accessType) / Accesses(accessType), 2, 6) +
+             fltstr((100.0 * Hits(accessType)) / Accesses(accessType), 2, 6) +
              "%\n";
 
       out += prefix + ljstr(type + "-Misses:    ", headerWidth) +
@@ -346,16 +389,17 @@ string CACHE_BASE::StatsLong(string prefix, CACHE_TYPE cache_type) const {
              fltstr(100.0 * Misses(accessType) / Accesses(accessType), 2, 6) +
              "%\n";
 
-      out +=
-          prefix + ljstr(type + "-Tombstones:    ", headerWidth) +
-          mydecstr(Tombstones(accessType), numberWidth) + "  " +
-          fltstr(100.0 * Tombstones(accessType) / Accesses(accessType), 2, 6) +
-          "%\n";
-
-      out += prefix + ljstr(type + "-Accesses:  ", headerWidth) +
-             mydecstr(Accesses(accessType), numberWidth) + "  " +
-             fltstr(100.0 * Accesses(accessType) / Accesses(accessType), 2, 6) +
+      out += prefix + ljstr(type + "-Tombstones:    ", headerWidth) +
+             mydecstr(Tombstones(accessType), numberWidth) + "  " +
+             fltstr((100.0 * Tombstones(accessType)) / Accesses(accessType), 2,
+                    6) +
              "%\n";
+
+      out +=
+          prefix + ljstr(type + "-Accesses:  ", headerWidth) +
+          mydecstr(Accesses(accessType), numberWidth) + "  " +
+          fltstr((100.0 * Accesses(accessType)) / Accesses(accessType), 2, 6) +
+          "%\n";
 
       out += prefix + "\n";
     }
@@ -391,8 +435,14 @@ template <class SET, UINT32 MAX_SETS, UINT32 STORE_ALLOCATION>
 class CACHE : public CACHE_BASE {
 private:
   SET _sets[MAX_SETS];
-  mutex _mu mutex &_write_mu;
+  mutex _mu;
+  mutex &_write_mu;
   std::vector<CACHE *> _peers;
+
+  /// Cache invalidation from addr to addr+size-1
+  void Invalidate(ADDRINT addr, UINT32 size);
+  /// Cache invalidation at addr that does not span cache lines
+  void InvalidateSingleLine(ADDRINT addr);
 
 public:
   // constructors/destructors
@@ -419,10 +469,16 @@ public:
   // Become aware of the cache for one other CPU
   void RegisterPeer(CACHE *peer);
 
-  /// Cache invalidation from addr to addr+size-1
-  void Invalidate(ADDRINT addr, UINT32 size);
-  /// Cache invalidation at addr that does not span cache lines
-  void InvalidateSingleLine(ADDRINT addr);
+  std::map<Interference, unsigned> InterferenceCounts() const {
+    std::map<Interference, unsigned> counts;
+    for (size_t i = 0; i < MAX_SETS; i++) {
+      const SET &set = _sets[i];
+      const std::map<Interference, unsigned> &interferences =
+          set.GetInterferenceCounts();
+      AddAllMappings(interferences, counts);
+    }
+    return counts;
+  }
 };
 
 /*!
@@ -432,7 +488,8 @@ public:
 template <class SET, UINT32 MAX_SETS, UINT32 STORE_ALLOCATION>
 bool CACHE<SET, MAX_SETS, STORE_ALLOCATION>::Access(ADDRINT addr, UINT32 size,
                                                     ACCESS_TYPE accessType) {
-  ptr_lock_guard lock(accessType == ACCESS_TYPE_STORE ? _write_mu : nullptr);
+  ptr_lock_guard<mutex> write_lock(accessType == ACCESS_TYPE_STORE ? &_write_mu
+                                                                   : nullptr);
   lock_guard lock(_mu);
   const ADDRINT highAddr = addr + size;
   ACCESS_RESULT allHit = CACHE_HIT;
@@ -447,9 +504,8 @@ bool CACHE<SET, MAX_SETS, STORE_ALLOCATION>::Access(ADDRINT addr, UINT32 size,
 
     SET &set = _sets[setIndex];
 
-    ACCESS_RESULT localHit = set.Find(tag);
-    allHit &= localHit;
-
+    ACCESS_RESULT localHit = set.Find(tag, addr);
+    allHit = static_cast<ACCESS_RESULT>(allHit & localHit);
     // on miss and tombstone, loads always allocate, stores optionally
     if ((localHit != CACHE_HIT) &&
         (accessType == ACCESS_TYPE_LOAD ||
@@ -461,7 +517,8 @@ bool CACHE<SET, MAX_SETS, STORE_ALLOCATION>::Access(ADDRINT addr, UINT32 size,
   } while (addr < highAddr);
 
   if (accessType == ACCESS_TYPE_STORE) {
-    for (auto *peer : peers) {
+    for (size_t i = 0; i < _peers.size(); i++) {
+      CACHE *peer = _peers[i];
       peer->Invalidate(addr, size);
     }
   }
@@ -477,7 +534,8 @@ bool CACHE<SET, MAX_SETS, STORE_ALLOCATION>::Access(ADDRINT addr, UINT32 size,
 template <class SET, UINT32 MAX_SETS, UINT32 STORE_ALLOCATION>
 bool CACHE<SET, MAX_SETS, STORE_ALLOCATION>::AccessSingleLine(
     ADDRINT addr, ACCESS_TYPE accessType) {
-  ptr_lock_guard lock(accessType == ACCESS_TYPE_STORE ? _write_mu : nullptr);
+  ptr_lock_guard<mutex> write_lock(accessType == ACCESS_TYPE_STORE ? &_write_mu
+                                                                   : nullptr);
   lock_guard lock(_mu);
   CACHE_TAG tag;
   UINT32 setIndex;
@@ -486,7 +544,7 @@ bool CACHE<SET, MAX_SETS, STORE_ALLOCATION>::AccessSingleLine(
 
   SET &set = _sets[setIndex];
 
-  ACCESS_RESULT hit = set.Find(tag);
+  ACCESS_RESULT hit = set.Find(tag, addr);
 
   // on miss, loads always allocate, stores optionally
   if ((hit != CACHE_HIT) && (accessType == ACCESS_TYPE_LOAD ||
@@ -497,8 +555,10 @@ bool CACHE<SET, MAX_SETS, STORE_ALLOCATION>::AccessSingleLine(
   _access[accessType][CALC_RESULT_INDEX(hit)]++;
 
   if (accessType == ACCESS_TYPE_STORE) {
-    for (auto *peer : peers)
+    for (size_t i = 0; i < _peers.size(); i++) {
+      CACHE *peer = _peers[i];
       peer->InvalidateSingleLine(addr);
+    }
   }
 
   return hit == CACHE_HIT;
@@ -511,8 +571,10 @@ template <class SET, UINT32 MAX_SETS, UINT32 STORE_ALLOCATION>
 void CACHE<SET, MAX_SETS, STORE_ALLOCATION>::RegisterPeers(
     const std::vector<CACHE *> &peers) {
   lock_guard lock(_mu);
-  for (auto *peer)
+  for (size_t i = 0; i < peers.size(); i++) {
+    CACHE *peer = peers[i];
     _peers.push_back(peer);
+  }
 }
 
 /*!
@@ -544,8 +606,8 @@ void CACHE<SET, MAX_SETS, STORE_ALLOCATION>::Invalidate(ADDRINT addr,
 
     SET &set = _sets[setIndex];
 
-    ACCESS_RESULT localHit = set.Find(tag);
-    allHit &= localHit;
+    ACCESS_RESULT localHit = set.Find(tag, addr);
+    allHit = static_cast<ACCESS_RESULT>(allHit & localHit);
 
     // If it's in the cache, remove it
     if (localHit == CACHE_HIT) {
@@ -571,7 +633,7 @@ void CACHE<SET, MAX_SETS, STORE_ALLOCATION>::InvalidateSingleLine(
   UINT32 setIndex;
   SplitAddress(addr, tag, setIndex);
   SET &set = _sets[setIndex];
-  ACCESS_RESULT hit = set.Find(tag);
+  ACCESS_RESULT hit = set.Find(tag, addr);
   // If it's in the cache, invalidate it
   if (hit == CACHE_HIT) {
     set.Invalidate(tag);
