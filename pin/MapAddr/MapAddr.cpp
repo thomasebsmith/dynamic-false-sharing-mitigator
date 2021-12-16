@@ -1,4 +1,5 @@
 #include "../detect/InterferenceDetector.h"
+#include "AccessInfo.h"
 #include <algorithm>
 #include <cassert>
 #include <fstream>
@@ -9,45 +10,6 @@
 
 using namespace std;
 
-struct global_var {
-  std::string name;
-  uint64_t start_addr;
-  size_t size;
-};
-
-struct memory_access {
-  std::string name;
-  uint64_t accessOffset;
-  uint64_t accessSize;
-};
-
-struct conflicting_access {
-  memory_access var1;
-  memory_access var2;
-  uint64_t priority;
-};
-
-struct conflicting_addr {
-  uint64_t addr1;
-  uint64_t addr2;
-};
-
-template <> struct std::hash<conflicting_addr> {
-  std::size_t operator()(conflicting_addr const &ca) const noexcept {
-    std::size_t h1 = std::hash<uint64_t>{}(ca.addr1);
-    std::size_t h2 = std::hash<uint64_t>{}(ca.addr2);
-    return h1 ^ h2; // or use boost::hash_combine
-  }
-};
-
-bool operator==(const conflicting_addr &left, const conflicting_addr &right) {
-  return (left.addr1 == right.addr1 && left.addr2 == right.addr2) ||
-         (left.addr1 == right.addr2 && left.addr2 == right.addr1);
-}
-
-bool operator<(const global_var &left, const global_var &right) {
-  return left.start_addr < right.start_addr;
-}
 
 // <name, accessOffsetInVar, accessSize>
 memory_access addr_to_named_access(uint64_t addr,
@@ -126,7 +88,7 @@ int main(int argc, char **argv) {
   }
 
   priority = 1;
-  while (potential_conflicting_addrs >> addr1 >> addr2) {
+  while (potential_conflicting_addrs >> addr1 >> addr2 >> priority) {
     auto realaddr1 = string_to_uint64(addr1, 16);
     auto realaddr2 = string_to_uint64(addr2, 16);
     conflicting_addr addrs = {realaddr1, realaddr2};
@@ -138,7 +100,7 @@ int main(int argc, char **argv) {
       continue;
     }
     if (priority_cache.count(addrs)) {
-      priority_cache[addrs].priority += 1;
+      priority_cache[addrs].priority += priority;
     } else {
       priority_cache[addrs] = ca;
     }

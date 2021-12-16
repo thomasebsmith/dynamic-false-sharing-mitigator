@@ -74,7 +74,8 @@ void InterferenceDetector::recordAccess(const std::string &rw,
       if (!isWrite && !access.second.isWrite) {
         continue; // don't mark as interference is both accesses are reads
       }
-      interferences.push_back({access.first, destAddrNum});
+      conflicting_addr interference{access.first, destAddrNum};
+      interferences[interference]++;
     }
   }
 }
@@ -82,7 +83,8 @@ void InterferenceDetector::recordAccess(const std::string &rw,
 void InterferenceDetector::outputInterferences(std::ostream &out) {
   std::cout << "Number of interferences: " << interferences.size() << std::endl;
   for (const auto &interference : interferences) {
-    out << std::hex << std::get<0>(interference) << "\t"
-        << std::get<1>(interference) << std::endl;
+    out << std::hex << interference.first.addr1 
+        << "\t" << interference.first.addr1 
+        << "\t" << std::dec << interference.second << std::endl;
   }
 }

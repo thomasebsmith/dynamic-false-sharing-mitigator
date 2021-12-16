@@ -1,5 +1,7 @@
 #pragma once
 
+#include "../MapAddr/AccessInfo.h"
+
 #include <cstdint>
 #include <ostream>
 #include <set>
@@ -32,5 +34,6 @@ private:
   };
   std::unordered_map<uint64_t, CacheLine> cachelines;
 
-  std::vector<std::tuple<uint64_t, uint64_t>> interferences;
+  // interference -> count
+  std::unordered_map<conflicting_addr, uint64_t> interferences;
 };
