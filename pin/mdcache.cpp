@@ -59,7 +59,7 @@ KNOB<UINT32>
                       "only report memops with miss count above threshold");
 KNOB<UINT32> KnobCacheSize(KNOB_MODE_WRITEONCE, "pintool", "c", "32",
                            "cache size in kilobytes");
-KNOB<UINT32> KnobLineSize(KNOB_MODE_WRITEONCE, "pintool", "b", "32",
+KNOB<UINT32> KnobLineSize(KNOB_MODE_WRITEONCE, "pintool", "b", "64",
                           "cache block size in bytes");
 KNOB<UINT32> KnobAssociativity(KNOB_MODE_WRITEONCE, "pintool", "a", "4",
                                "cache associativity (1 for direct mapped)");
