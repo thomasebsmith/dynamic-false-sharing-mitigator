@@ -116,7 +116,7 @@ public:
   operator ADDRINT() const { return _tag; }
   void kill(ADDRINT addr) { _tombstone_addr = addr; }
   bool is_dead() const { return _tombstone_addr >= 0; }
-  bool matches(ADDRINT addr) const { return addr == _tombstone_addr; }
+  bool matches(ADDRINT addr) const { return static_cast<int64_t>(addr) == _tombstone_addr; }
   ADDRINT tombstoneAddr() const { return _tombstone_addr; }
 };
 
