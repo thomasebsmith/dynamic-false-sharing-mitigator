@@ -39,9 +39,14 @@ rm -rf "${RUN_DIR}"
 mkdir -p "${RUN_DIR}"
 
 # Convert source code to bitcode (IR)
-clang -emit-llvm -I/usr/include/llvm-c-10 -I/usr/include/llvm-10 "${BENCH}" -c -o "${RUN_DIR}/${NAME}.bc"
+echo 'Compiling benchmark to bitcode...'
+clang -O3 -emit-llvm -I/usr/include/llvm-c-10 -I/usr/include/llvm-10 "${BENCH}" -c -o "${RUN_DIR}/${NAME}.bc"
 
+echo 'Running pass...'
 opt -load "${PASSPATH}" "${PASSARG}" "${RUN_DIR}/${NAME}.bc" -o "${RUN_DIR}/${NAME}.${PASS}.bc"
-clang -pthread -lstdc++ "${RUN_DIR}/${NAME}.${PASS}.bc" -o "${RUN_DIR}/${NAME}_${PASS}"
 
-"${RUN_DIR}/${NAME}_${PASS}"
+echo 'Generating final executable...'
+clang -O3 -pthread -lstdc++ "${RUN_DIR}/${NAME}.${PASS}.bc" -o "${RUN_DIR}/${NAME}_${PASS}"
+
+echo 'Running final executable...'
+"${RUN_DIR}/${NAME}_${PASS}" || true # Ignore return code of actual executable

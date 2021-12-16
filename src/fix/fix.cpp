@@ -104,22 +104,27 @@ static bool fixGlobalStruct(Module &M, GlobalVariable *globalVar, PaddedStruct &
         return false;
       }
     } else if (auto *constExpr = dyn_cast<ConstantExpr>(user)) {
-      if (constExpr->getOpcode() != Instruction::GetElementPtr) {
-        errs() << "Unable to pad struct - used in unfixable constant expression\n";
-        return false;
-      }
-      if (constExpr->getNumOperands() < 3) {
-        errs() << "Unable to pad struct - used in array-style GetElementPtr constant expression\n";
-        return false;
-      }
-      if (constExpr->getOperand(0) != globalVar) {
-        errs() << "Unable to pad struct - used in unfixable GetElementPtr constant expression\n";
-        return false;
-      }
-      auto *index = constExpr->getOperand(2); // operand 2 = GEP index 1 = the struct member
-      if (!isa<ConstantInt>(index)) {
-        errs() << "Unable to pad struct - non-constant GetElementPtr index\n";
-        return false;
+      switch (constExpr->getOpcode()) {
+        case Instruction::GetElementPtr: {
+          if (constExpr->getNumOperands() < 3) {
+            errs() << "Unable to pad struct - used in array-style GetElementPtr constant expression\n";
+            return false;
+          }
+          if (constExpr->getOperand(0) != globalVar) {
+            errs() << "Unable to pad struct - used in unfixable GetElementPtr constant expression\n";
+            return false;
+          }
+          auto *index = constExpr->getOperand(2); // operand 2 = GEP index 1 = the struct member
+          if (!isa<ConstantInt>(index)) {
+            errs() << "Unable to pad struct - non-constant GetElementPtr index\n";
+            return false;
+          }
+          break;
+        }
+
+        default:
+          errs() << "Unable to pad struct - used in unfixable constant expression\n";
+          return false;
       }
     } else {
       errs() << "Unable to pad struct - used in unfixable instruction\n";
@@ -168,27 +173,30 @@ static bool fixGlobalStruct(Module &M, GlobalVariable *globalVar, PaddedStruct &
     globalVar->getThreadLocalMode(),
     globalVar->getAddressSpace(),
     globalVar->isExternallyInitialized());
-  newGlobalVar->setAlignment(Align(globalVar->getAlignment()));
+  newGlobalVar->setAlignment(Align(cacheLineSize));
 
   auto *int32Ty = Type::getInt32Ty(globalVar->getContext());
+  SmallVector<Instruction *> toErase;
   for (auto *user : globalVar->users()) {
     if (auto *gepInst = dyn_cast<GetElementPtrInst>(user)) {
       SmallVector<Value *> newIndices;
       size_t i = 0;
       for (auto &indexUse : gepInst->indices()) {
-        newIndices.push_back(indexUse);
         if (i == 1) { // The index that might need to change
           unsigned int oldElement = static_cast<unsigned int>(
             cast<ConstantInt>(indexUse)->getZExtValue());
           unsigned int newElement = padded.newElementByOldElement[oldElement];
           auto *newConst = ConstantInt::get(int32Ty, newElement);
           newIndices.push_back(newConst);
+        } else {
+          newIndices.push_back(indexUse);
         }
         ++i;
       }
       auto *newInst = GetElementPtrInst::Create(padded.type, newGlobalVar, newIndices);
       newInst->setIsInBounds(gepInst->isInBounds());
       gepInst->replaceAllUsesWith(newInst);
+      toErase.push_back(gepInst);
     } else if (auto *constExpr = dyn_cast<ConstantExpr>(user)) {
       SmallVector<Constant *> operands;
       for (auto &use : constExpr->operands()) {
@@ -204,7 +212,12 @@ static bool fixGlobalStruct(Module &M, GlobalVariable *globalVar, PaddedStruct &
 
       auto *newConstExpr = constExpr->getWithOperands(operands, padded.type, false, padded.type);
       constExpr->replaceAllUsesWith(newConstExpr);
+    } else {
+      assert(false && "Unexpected user");
     }
+  }
+  for (auto *inst : toErase) {
+    inst->eraseFromParent();
   }
   globalVar->eraseFromParent();
 
@@ -249,19 +262,24 @@ struct Fix583 : public ModulePass {
 
     for (auto &conflict : conflicts) {
       if (!priorityThreshold) {
-        priorityThreshold = conflict.priority / 10;
+        priorityThreshold = conflict.priority / 1000;
       }
       if (conflict.priority < *priorityThreshold) {
         break;
       }
       auto *global1 = M.getGlobalVariable(conflict.entry1.variableName, true);
       auto *global2 = M.getGlobalVariable(conflict.entry2.variableName, true);
-      if (!global1 || !global2) {
+      if (!global1) {
+        errs() << "Did not find global with name " << conflict.entry1.variableName << '\n';
+        continue;
+      }
+      if (!global2) {
+        errs() << "Did not find global with name " << conflict.entry2.variableName << '\n';
         continue;
       }
       if (conflict.entry1.variableName == conflict.entry2.variableName) {
         if (auto *type = dyn_cast<StructType>(global1->getValueType())) {
-          if (enableStructPadding && !type->isPacked() && GlobalValue::isLocalLinkage(global1->getLinkage())) {
+          if (enableStructPadding && GlobalValue::isLocalLinkage(global1->getLinkage())) {
             auto &set = structAccesses[type][global1];
             set.insert(conflict.entry1.accessOffsetInVariable);
             set.insert(conflict.entry2.accessOffsetInVariable);
