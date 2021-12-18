@@ -18,7 +18,8 @@
   - `globals` - First pass to output the names, locations,
                 and sizes of all global variables at the
                 beginning of program execution.
-  - `fix`     - Second pass to fix false sharing
+  - `fix`     - Second pass to fix false sharing by aligning global variables and
+                padding structs.
 
 ## Setup
 *Prerequisites*: LLVM is installed on the machine
